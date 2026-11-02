@@ -13,8 +13,8 @@
 set -euo pipefail
 
 HOST="${VPS_HOST:-}"
-USER_NAME="${VPS_USER:-zisp}"
-KEY="${VPS_SSH_KEY_FILE:-$HOME/.ssh/zisp.pem}"
+USER_NAME="${VPS_USER:-azureuser}"
+KEY="${VPS_SSH_KEY_FILE:-$HOME/.ssh/zisp}"
 
 if [[ -z "$HOST" ]]; then
   TFDIR="$(cd "$(dirname "$0")/../terraform" && pwd)"

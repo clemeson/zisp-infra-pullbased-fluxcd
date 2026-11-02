@@ -29,7 +29,7 @@ variable "vm_size" {
 variable "admin_username" {
   description = "Usuário sem privilégio. O Ansible e o CI usam sudo; ninguém entra como root."
   type        = string
-  default     = "zisp"
+  default     = "azureuser"
 }
 
 variable "ssh_public_key_path" {
