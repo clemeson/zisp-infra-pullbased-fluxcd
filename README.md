@@ -314,6 +314,40 @@ perdeu (esses usuários não existem no servidor VPN) e todas as 5 têm
 topologia que não existe. Precisam ser re-registradas pelo fluxo normal, que
 agora grava o domínio.
 
+## Este cluster expira em ~02/12/2026
+
+A VM `zisp-sb` roda sobre crédito promocional da Azure: **USD 200 válidos por
+30 dias**, a partir de 02/11/2026. O `Standard_E2as_v7` consome ~USD 139/mês
+(USD 4,58/dia); com disco Premium e IP estático, ~USD 150-160 dos 200. Cabe,
+mas não sobra para manter duas VMs no ar ao mesmo tempo durante a troca — o
+corte é sequencial, com janela.
+
+Isso não é um problema a resolver, é a premissa: a arquitetura foi desenhada
+para a VPS ser descartável. Mas torna duas coisas obrigatórias.
+
+**O backup do `chap-secrets` vira o item crítico.** Quando a VM morrer, os
+dois Redis morrem junto (PVC `local-path`, no disco dela) — isso está
+acordado. O Postgres está no Supabase, fora do cluster. Mas o `chap-secrets`
+mora no HOST: é a base de usuários da VPN. Sem backup verificado, a troca de
+VM repete exatamente a perda que originou este repositório.
+
+**Backup nunca restaurado é hipótese.** Restaure um de propósito enquanto
+errar ainda é barato.
+
+| quando | o quê |
+|---|---|
+| ~dia 10 (12/11) | restaurar um backup em namespace de teste e conferir que volta |
+| ~dia 25 (27/11) | subir a VM nova, rodar o playbook, trocar o registro A |
+| ~dia 28 (30/11) | derrubar a antiga |
+
+TTL do DNS: 300s no dia a dia, **60s na véspera da troca**. O RouterOS só
+rerresolve no retry, respeitando o cache dele — o watchdog do script garante
+no máximo 5 minutos por CPE.
+
+A troca é também o ensaio da portabilidade: se a próxima VM for em outra
+conta ou outro provedor, o caminho inteiro fica testado com rede embaixo, em
+vez de no dia em que não houver escolha.
+
 ## Pendências conhecidas
 
 - **Preencher os três `ZISP_*_ENV`** a partir de `secrets/*.env.example` e
