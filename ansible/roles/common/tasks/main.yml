@@ -1,0 +1,154 @@
+---
+# ---------------------------------------------------------------------------
+# Pré-condição
+# ---------------------------------------------------------------------------
+
+# Se a sub-rede da VM sobrepuser o pool da VPN, o roteamento quebra de um jeito
+# muito difícil de diagnosticar depois — melhor falhar aqui, alto e claro.
+- name: Abortar se o IP privado da VM colide com a rede da VPN
+  ansible.builtin.assert:
+    that:
+      - not (ansible_default_ipv4.address is match('^10\.19\.2[4-7]\.'))
+    fail_msg: >-
+      CONFLITO: o IP privado da VM ({{ ansible_default_ipv4.address }}) está
+      dentro de {{ vpn_network }}. Troque a sub-rede da VNet (terraform:
+      subnet_address_prefix) ou a faixa da VPN antes de continuar.
+    success_msg: "IP privado {{ ansible_default_ipv4.address }} não colide com {{ vpn_network }}"
+
+# ---------------------------------------------------------------------------
+# Básico do host
+# ---------------------------------------------------------------------------
+
+# timedatectl em vez de community.general.timezone: este playbook roda só com
+# ansible-core, sem nenhuma collection do Galaxy instalada.
+- name: Ler o timezone atual
+  ansible.builtin.command: timedatectl show -p Timezone --value
+  register: common_tz_current
+  changed_when: false
+
+- name: Definir timezone
+  ansible.builtin.command: "timedatectl set-timezone {{ host_timezone }}"
+  when: common_tz_current.stdout != host_timezone
+  changed_when: true
+
+- name: Instalar pacotes base
+  ansible.builtin.apt:
+    name: "{{ common_packages }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+# ---------------------------------------------------------------------------
+# Módulos de kernel do L2TP
+# ---------------------------------------------------------------------------
+
+- name: Persistir módulos do L2TP para o boot
+  ansible.builtin.copy:
+    dest: /etc/modules-load.d/zisp-l2tp.conf
+    content: "{{ common_l2tp_modules | join('\n') }}\n"
+    owner: root
+    group: root
+    mode: "0644"
+
+# modprobe de módulo já carregado é no-op, por isso changed_when: false.
+- name: Carregar módulos do L2TP agora
+  ansible.builtin.command: "modprobe {{ item }}"
+  loop: "{{ common_l2tp_modules }}"
+  changed_when: false
+
+- name: Confirmar que o l2tp_ppp carregou
+  ansible.builtin.shell: |
+    set -o pipefail
+    lsmod | grep -q '^l2tp_ppp'
+  args:
+    executable: /bin/bash
+  changed_when: false
+  register: common_l2tp_loaded
+  failed_when: false
+
+- name: Falhar se o l2tp_ppp não está carregado
+  ansible.builtin.fail:
+    msg: >-
+      l2tp_ppp não carregou. O xl2tpd vai subir e aceitar conexão, mas o túnel
+      nunca fecha. Verifique se linux-modules-extra-azure casa com o kernel
+      em uso ({{ ansible_kernel }}); um reboot pode ser necessário após upgrade
+      de kernel.
+  when: common_l2tp_loaded.rc != 0
+
+# ---------------------------------------------------------------------------
+# sysctl
+#
+# Arquivo próprio em /etc/sysctl.d em vez de append em /etc/sysctl.conf:
+# idempotente, e dá pra ver de quem é a configuração.
+# ---------------------------------------------------------------------------
+
+- name: Configurar sysctl da VPN
+  ansible.builtin.copy:
+    dest: /etc/sysctl.d/99-zisp-vpn.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Roteamento dos pacotes do túnel L2TP para a internet.
+      net.ipv4.ip_forward = 1
+
+      # rp_filter desligado: o pppd cria rotas assimétricas e o filtro de
+      # caminho reverso descartaria o tráfego do túnel silenciosamente.
+      net.ipv4.conf.all.rp_filter = 0
+      net.ipv4.conf.default.rp_filter = 0
+
+      net.ipv4.conf.all.accept_redirects = 0
+      net.ipv4.conf.all.send_redirects = 0
+  notify: Recarregar sysctl
+
+- name: Configurar swappiness
+  ansible.builtin.copy:
+    dest: /etc/sysctl.d/99-zisp-swappiness.conf
+    content: "vm.swappiness = {{ common_swappiness }}\n"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Recarregar sysctl
+
+# ---------------------------------------------------------------------------
+# Swap
+#
+# A VM anterior rodava SEM swap: Postgres + 2 Redis + 6 pods num nó só, e o
+# OOM killer agindo sem rede de segurança. Swap não substitui RAM — só evita
+# que um pico mate um processo.
+# ---------------------------------------------------------------------------
+
+- name: Criar swapfile
+  ansible.builtin.command: "fallocate -l {{ swap_size_mb }}M /swapfile"
+  args:
+    creates: /swapfile
+  when: swap_size_mb | int > 0
+  register: common_swapfile_created
+
+- name: Permissão do swapfile
+  ansible.builtin.file:
+    path: /swapfile
+    owner: root
+    group: root
+    mode: "0600"
+  when: swap_size_mb | int > 0
+
+# Numa tarefa só: swapon depende do mkswap ter acabado, e ambos precisam
+# rodar agora — não num handler no fim do play.
+- name: Formatar e ativar o swap
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      mkswap /swapfile
+      swapon /swapfile
+    executable: /bin/bash
+  when: common_swapfile_created is changed
+  changed_when: true
+
+- name: Montar o swap no boot
+  ansible.builtin.lineinfile:
+    path: /etc/fstab
+    regexp: '^/swapfile\s'
+    line: "/swapfile none swap sw 0 0"
+    state: present
+  when: swap_size_mb | int > 0

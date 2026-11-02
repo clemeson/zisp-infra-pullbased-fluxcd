@@ -1,0 +1,5 @@
+#!/bin/bash
+# GERENCIADO POR ANSIBLE — infra/ansible/roles/vpn/files/
+# Args do pppd: $1 iface $2 tty $3 speed $4 local-ip $5 remote-ip $6 ipparam
+# PEERNAME (usuário autenticado via MSCHAPv2) vem por variável de ambiente.
+exec /usr/local/sbin/zisp-ppp-connections.py up "$PEERNAME" "$5" || true

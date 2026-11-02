@@ -1,0 +1,180 @@
+# Duas instâncias separadas de propósito: a política de memória é incompatível
+# entre elas. Fila BullMQ com eviction = job sumindo em silêncio, por isso
+# `noeviction` na primeira; cache de telemetria pode descartar chave velha,
+# por isso `allkeys-lru` na segunda.
+#
+# ---------------------------------------------------------------------------
+# PVC + persistência: as duas coisas, ou nenhuma.
+#
+# Montar um PVC e deixar o Redis sem `appendonly`/`save` dá um disco que
+# nunca recebe nada: o pod reinicia, monta o volume, e o volume está vazio.
+# Fica a aparência de durabilidade sem a propriedade -- pior que emptyDir
+# assumido, porque ninguém vai conferir. Por isso cada instância abaixo
+# declara PVC E a sua política de gravação.
+#
+# Políticas diferentes, pelo mesmo motivo que a memória é diferente:
+#   bullmq  -> appendonly yes   fila; perder job é o que estamos evitando
+#   monitor -> save periódico   cache; perder alguns minutos não custa nada,
+#                               e AOF em cache é I/O gasto à toa
+#
+# storageClassName: local-path (default do k3s). O volume é um diretório no
+# host, em /var/lib/rancher/k3s/storage. Sobrevive a restart de pod e a
+# reboot da máquina -- NÃO sobrevive à VPS morrer. É para isso que existe o
+# snapshot horário em infrastructure/backup/redis.yaml.
+#
+# local-path NÃO suporta expansão (AllowVolumeExpansion: false): crescer
+# depois exige recriar o PVC. Dimensionado com folga de propósito -- o AOF
+# precisa de espaço para o rewrite, que chega a dobrar o arquivo.
+# ---------------------------------------------------------------------------
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redis-bullmq-data
+  namespace: zisp
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-bullmq-svc
+  namespace: zisp
+spec:
+  selector: { app: redis-bullmq }
+  ports:
+    - port: 6379
+      targetPort: 6379
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis-bullmq
+  namespace: zisp
+spec:
+  replicas: 1
+  # Recreate é obrigatório com PVC RWO: dois pods não montam o mesmo volume,
+  # e um RollingUpdate ficaria preso esperando o novo pod subir.
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app: redis-bullmq }
+  template:
+    metadata:
+      labels: { app: redis-bullmq }
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          args:
+            # maxmemory explícito: sem isso o Redis cresce até o limit do
+            # container e o kernel mata o pod (OOMKilled) em vez de o Redis
+            # aplicar a própria política.
+            - --maxmemory
+            - 192mb
+            - --maxmemory-policy
+            - noeviction
+            - --appendonly
+            - "yes"
+            - --dir
+            - /data
+          ports:
+            - containerPort: 6379
+          volumeMounts:
+            - { name: data, mountPath: /data }
+          resources:
+            requests: { cpu: 50m, memory: 96Mi }
+            limits: { cpu: 200m, memory: 256Mi }
+          readinessProbe:
+            exec: { command: ["redis-cli", "ping"] }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            exec: { command: ["redis-cli", "ping"] }
+            # Carregar um AOF grande no boot demora, e o Redis não responde
+            # PING enquanto carrega. Sem esta folga o kubelet mataria o pod
+            # no meio da recuperação, em laço.
+            initialDelaySeconds: 60
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: redis-bullmq-data
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redis-monitor-data
+  namespace: zisp
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-monitor-svc
+  namespace: zisp
+spec:
+  selector: { app: redis-monitor }
+  ports:
+    - port: 6379
+      targetPort: 6379
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis-monitor
+  namespace: zisp
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app: redis-monitor }
+  template:
+    metadata:
+      labels: { app: redis-monitor }
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          args:
+            - --maxmemory
+            - 112mb
+            - --maxmemory-policy
+            - allkeys-lru
+            # RDB em vez de AOF: é cache. "save 300 10" = snapshot se houver
+            # ao menos 10 escritas em 5 minutos. Perder até 5 minutos de
+            # cache não custa nada; AOF aqui seria I/O gasto à toa.
+            - --save
+            - "300 10"
+            - --dir
+            - /data
+          ports:
+            - containerPort: 6379
+          volumeMounts:
+            - { name: data, mountPath: /data }
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits: { cpu: 150m, memory: 192Mi }
+          readinessProbe:
+            exec: { command: ["redis-cli", "ping"] }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            exec: { command: ["redis-cli", "ping"] }
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: redis-monitor-data

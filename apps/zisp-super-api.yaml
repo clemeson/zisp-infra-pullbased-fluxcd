@@ -1,0 +1,90 @@
+# zisp-super-api (era `super-api`). Painel super + CRM de prospecção + agente
+# BDR. Sem Prisma: DynamoDB.
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: zisp-super-api
+  namespace: zisp
+spec:
+  interval: 5m
+  chart:
+    spec:
+      chart: ./charts/app
+      sourceRef:
+        kind: GitRepository
+        name: flux-system
+        namespace: flux-system
+  install: { remediation: { retries: 2 } }
+  upgrade: { remediation: { retries: 2 } }
+  values:
+    nameOverride: zisp-super-api
+
+    image:
+      repository: ghcr.io/clemeson/zisp-super-api
+      tag: "0.1.0" # {"$imagepolicy": "flux-system:zisp-super-api:tag"}
+
+    containerPort: 3050
+    portEnvName: PORT
+
+    # Recreate, e não é por volume: as sessões WhatsApp (Baileys) rodam DENTRO
+    # deste processo. Dois pods = dois sockets com as mesmas credenciais de
+    # sessão = o WhatsApp derruba a conexão.
+    #
+    # No Flux antigo o aviso estava no comentário mas `strategy` não estava
+    # definida, então herdava RollingUpdate: em todo deploy havia ~30s com
+    # dois pods abrindo Baileys na sessão `zisp-super`. Candidata plausível ao
+    # ban do número em 28/09/2026.
+    replicas: 1
+    strategy: { type: Recreate }
+
+    resources:
+      requests: { cpu: 80m, memory: 240Mi }
+      limits: { cpu: 250m, memory: 400Mi }
+
+    # NÃO LIGAR. Mesmo motivo do Recreate: réplica > 1 derruba a sessão.
+    autoscaling: { enabled: false }
+
+    probes:
+      enabled: true
+      path: /health
+      readiness: { initialDelaySeconds: 5, periodSeconds: 5, timeoutSeconds: 2, failureThreshold: 3 }
+      liveness: { initialDelaySeconds: 10, periodSeconds: 10, timeoutSeconds: 3, failureThreshold: 3 }
+
+    env:
+      configMap:
+        enabled: true
+        data:
+          NODE_ENV: "production"
+          DYNAMODB_LEADS_TABLE: "zisp-chatbot-leads"
+          DYNAMODB_USERS_TABLE: "zisp-super-users"
+          JWT_ACCESS_EXPIRES_IN: "15m"
+          JWT_REFRESH_EXPIRES_IN: "30d"
+          AWS_REGION: "us-east-1"
+          CORS_ORIGINS: "https://super.zisp.com.br"
+          SES_FROM_EMAIL: "contato@zisp.com.br"
+          REDIS_URL: "redis://redis-bullmq-svc:6379"
+          ZISP_API_INTERNAL_URL: "http://zisp-api-svc"
+          WHATSAPP_SESSION_ID: "zisp-super"
+          # Rate-limit zerado de propósito (decisão 2026-09-09): ambiente
+          # controlado. ANTES havia 45000/24 explícitos aqui, que
+          # sobrescreviam o default 0 do código e deixavam o rate-limit ativo
+          # sem ninguém notar.
+          LEADS_MIN_SEND_INTERVAL_MS: "0"
+          LEADS_BATCH_COOLDOWN_HOURS: "0"
+          # DESLIGADO em 28/09/2026 após o ban do número `zisp-super` (403 em
+          # loop). NÃO religar sem (1) número novo conectado e (2) ritmo
+          # revisado.
+          BDR_AUTONOMOUS_ENABLED: "false"
+      secret:
+        enabled: true
+        name: zisp-super-api-env
+
+    ingress:
+      enabled: true
+      # super.zisp.com.br é o painel na Netlify; a API fica no -api.
+      host: super-api.zisp.com.br
+      ingressClassName: traefik
+      clusterIssuer: letsencrypt-prod
+
+    # Sem Prisma, sem schema: não há migração.
+    migration: { enabled: false }

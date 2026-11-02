@@ -1,0 +1,19 @@
+# Camada 1: o que as aplicações assumem que já existe.
+#
+# `wait: true` é o que faz o dependsOn do apps.yaml significar alguma coisa:
+# sem ele o Flux marca esta Kustomization pronta assim que APLICA os objetos,
+# e as aplicações subiriam contra um Redis que ainda não tem endpoint.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: infrastructure
+  namespace: flux-system
+spec:
+  interval: 10m
+  path: ./infrastructure
+  prune: true
+  wait: true
+  timeout: 5m
+  sourceRef:
+    kind: GitRepository
+    name: flux-system

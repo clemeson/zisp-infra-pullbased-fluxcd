@@ -1,0 +1,37 @@
+---
+# ---------------------------------------------------------------------------
+# Rede da VPN L2TP
+#
+# ATENÇÃO ao /22: 10.19.25.0/22 é CIDR INVÁLIDO — o endereço de rede de um /22
+# precisa ser múltiplo de 4 no terceiro octeto, então 10.19.25.0/22 é
+# normalizado silenciosamente para 10.19.24.0/22 por quem o consome. O mesmo
+# erro já tinha sido corrigido no gerador de script Mikrotik.
+#
+# Gateway e pool NÃO mudam: estão gravados nos registros de Routerboard do
+# banco e no script de provisionamento.
+# ---------------------------------------------------------------------------
+vpn_network: "10.19.24.0/22"
+vpn_gateway: "10.19.25.1"
+vpn_pool_start: "10.19.25.10"
+vpn_pool_end: "10.19.27.254"
+
+# ---------------------------------------------------------------------------
+# O domínio é o que torna a VPS descartável.
+#
+# Antes o `connect-to=` do Mikrotik levava o IP da VPS cravado, e trocar de
+# provedor significava visitar CPE por CPE. Com domínio, migrar é: subir a
+# máquina nova, apontar o registro A, rodar este playbook.
+#
+# Regras que fazem isso funcionar de verdade (ver README):
+#   - TTL 300s no dia a dia, 60s antes de uma migração planejada;
+#   - `use-peer-dns=no` no l2tp-client, senão o CPE pode ficar sem DNS
+#     justamente quando precisa rerresolver;
+#   - o RouterOS NÃO rerresolve com o túnel de pé: ele rerresolve no retry,
+#     respeitando o cache de DNS dele. Por isso o watchdog no CPE.
+# ---------------------------------------------------------------------------
+vpn_hostname: "vpn.zisp.com.br"
+
+k3s_version: "v1.36.5+k3s1"
+
+swap_size_mb: 2048
+host_timezone: "America/Sao_Paulo"

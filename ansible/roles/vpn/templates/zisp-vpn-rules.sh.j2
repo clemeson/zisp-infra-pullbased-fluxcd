@@ -1,0 +1,21 @@
+#!/bin/bash
+# GERENCIADO POR ANSIBLE — infra/ansible/roles/vpn/templates/zisp-vpn-rules.sh.j2
+#
+# Aplica SÓ as regras da VPN, sem tocar nas do k3s. Ver o comentário no
+# tasks/main.yml do role sobre por que não usamos iptables-persistent.
+set -e
+
+VPN_NETWORK="{{ vpn_network }}"
+# Detectado em runtime, não fixado pelo Ansible: o nome da interface pode
+# mudar entre boots na Azure (eth0 vs. enP*).
+NET_IFACE="$(ip route show default | awk '{print $5}' | head -1)"
+
+# -C testa antes de -A: sem isso cada boot acrescentaria uma regra duplicada.
+iptables -C FORWARD -s "$VPN_NETWORK" -j ACCEPT 2>/dev/null || \
+  iptables -A FORWARD -s "$VPN_NETWORK" -j ACCEPT
+
+iptables -C FORWARD -d "$VPN_NETWORK" -j ACCEPT 2>/dev/null || \
+  iptables -A FORWARD -d "$VPN_NETWORK" -j ACCEPT
+
+iptables -t nat -C POSTROUTING -s "$VPN_NETWORK" ! -d "$VPN_NETWORK" -o "$NET_IFACE" -j MASQUERADE 2>/dev/null || \
+  iptables -t nat -A POSTROUTING -s "$VPN_NETWORK" ! -d "$VPN_NETWORK" -o "$NET_IFACE" -j MASQUERADE

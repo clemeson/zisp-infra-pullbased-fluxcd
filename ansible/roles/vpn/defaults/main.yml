@@ -1,0 +1,14 @@
+---
+vpn_packages:
+  - xl2tpd
+  - ppp
+
+# DNS entregue aos clientes do túnel.
+vpn_dns:
+  - "8.8.8.8"
+  - "8.8.4.4"
+
+# MTU/MRU reduzidos: o encapsulamento L2TP come bytes e, sem folga, pacote
+# grande fragmenta ou é descartado no caminho.
+vpn_mtu: 1410
+vpn_mru: 1450

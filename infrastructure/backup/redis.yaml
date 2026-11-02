@@ -1,0 +1,53 @@
+# Snapshot dos dois Redis para o S3.
+#
+# Você disse que perder Redis não é problema, e o armazenamento reflete isso:
+# `emptyDir`, sem PVC, sem AOF. Este CronJob não contradiz essa decisão -- ele
+# existe porque `redis-cli --rdb` puxa o dump PELA REDE, sem exigir volume
+# nenhum. Ou seja: custa um arquivo por hora no S3 e não devolve nenhuma das
+# complicações de estado em disco.
+#
+# Serve para o caso "a fila tinha 2 mil jobs e o pod reiniciou", que é chato
+# de reprocessar à mão mesmo não sendo perda de cliente. Se não quiser nem
+# isso, apagar este arquivo é a mudança completa.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: backup-redis
+  namespace: zisp
+spec:
+  schedule: "37 * * * *"
+  timeZone: America/Sao_Paulo
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: snapshot
+              image: ghcr.io/clemeson/zisp-backup:latest # {"$imagepolicy": "flux-system:zisp-backup"}
+              envFrom:
+                - configMapRef: { name: backup-config }
+                - secretRef: { name: aws-backup-credentials }
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -eu
+                  for inst in bullmq monitor; do
+                    OUT="/tmp/redis-${inst}.rdb"
+                    # --rdb puxa o snapshot pela rede. Não depende de volume,
+                    # nem de o Redis ter persistência ligada.
+                    if ! redis-cli -h "redis-${inst}-svc" --rdb "$OUT" >/dev/null 2>&1; then
+                      echo "aviso: redis-${inst} nao respondeu, pulando" >&2
+                      continue
+                    fi
+                    gzip -f "$OUT"
+                    aws s3 cp "${OUT}.gz" "s3://${S3_BUCKET}/redis/${inst}/latest.rdb.gz"
+                    echo "ok: ${inst} $(stat -c%s "${OUT}.gz")B"
+                  done
+              resources:
+                requests: { cpu: 20m, memory: 48Mi }
+                limits: { cpu: 200m, memory: 192Mi }

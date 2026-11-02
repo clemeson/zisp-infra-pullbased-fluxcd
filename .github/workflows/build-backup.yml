@@ -1,0 +1,53 @@
+# Imagem usada pelos três CronJobs de backup. Vive neste repositório porque
+# é infraestrutura, não aplicação: pg_dump, redis-cli e aws-cli numa camada
+# só, com versão fixa em vez de `apk add` no caminho crítico do backup.
+#
+# Gerado a partir de docs/app-workflow-template.yml.
+name: Build zisp-backup
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - images/backup/**
+      - .github/workflows/build-backup.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: zisp-backup-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          # Token efêmero do próprio run. Não existe em Settings, não vaza,
+          # não precisa rodar.
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build e push
+        run: |
+          set -euo pipefail
+          # <timestamp>-<sha curto>. O timestamp dá ordem numérica para a
+          # ImagePolicy do Flux; o sha responde "qual commit está no ar?",
+          # que é a primeira pergunta de todo incidente. Tag só com sha não
+          # ordena; tag só com data não identifica.
+          TAG="$(date -u +%s)-${GITHUB_SHA::7}"
+          IMAGE="ghcr.io/${{ github.repository_owner }}/zisp-backup"
+
+          docker build -t "$IMAGE:$TAG" images/backup
+          docker push "$IMAGE:$TAG"
+
+          echo "$IMAGE:$TAG" >> "$GITHUB_STEP_SUMMARY"
+          echo "O Flux detecta em até 5 min e commita a tag no zisp-infra." >> "$GITHUB_STEP_SUMMARY"

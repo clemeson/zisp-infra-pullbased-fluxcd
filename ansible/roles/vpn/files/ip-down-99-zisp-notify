@@ -1,0 +1,3 @@
+#!/bin/bash
+# GERENCIADO POR ANSIBLE — infra/ansible/roles/vpn/files/
+exec /usr/local/sbin/zisp-ppp-connections.py down "$PEERNAME" || true

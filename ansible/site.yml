@@ -1,0 +1,32 @@
+---
+# Provisionamento do host único que roda k3s + VPN L2TP.
+#
+#   ansible-playbook site.yml                  # tudo
+#   ansible-playbook site.yml --tags vpn       # só a VPN
+#   ansible-playbook site.yml --check --diff   # o que mudaria, sem aplicar
+#
+# Este playbook para no k3s. Nada de aplicação entra por aqui: a partir do
+# momento em que o k3s sobe, quem põe carga no cluster é o Flux, lendo este
+# mesmo repositório. A fronteira é deliberada -- host é imperativo-convergente
+# (Ansible), cluster é declarativo-reconciliado (Flux).
+- name: Provisionar o nó k3s
+  hosts: zisp
+  become: true
+
+  pre_tasks:
+    - name: Confirmar que é Ubuntu
+      ansible.builtin.assert:
+        that:
+          - ansible_distribution == "Ubuntu"
+        fail_msg: >-
+          Este playbook assume Ubuntu (apt, linux-modules-extra-azure,
+          caminhos do ppp). Encontrado: {{ ansible_distribution }}
+          {{ ansible_distribution_version }}
+
+  roles:
+    - role: common
+      tags: [common]
+    - role: k3s
+      tags: [k3s]
+    - role: vpn
+      tags: [vpn]

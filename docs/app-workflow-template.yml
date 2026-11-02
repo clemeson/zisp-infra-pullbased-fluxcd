@@ -1,0 +1,74 @@
+# Molde do .github/workflows/build.yml de uma aplicação ZISP.
+#
+# JÁ APLICADO nos três repos (zisp-api, zisp-vpn-api, zisp-super-api) em
+# 02/11/2026. Fica aqui como referência e para a próxima aplicação.
+#
+# Copie para o repo da aplicação e troque APP_NAME. É tudo.
+#
+# NENHUM SECRET CONFIGURADO. O único `secrets.` aqui é o GITHUB_TOKEN, que o
+# Actions gera por execução e descarta no fim -- não existe em Settings, não
+# vaza e não precisa rodar. A diferença entre os dois modelos:
+#
+#   antes                                   agora
+#   --------------------------------------  --------------------------------
+#   AWS_ACCESS_KEY_ID / _SECRET_ACCESS_KEY  GITHUB_TOKEN, gerado por run
+#   AWS_REGION                              -
+#   VPS_HOST / VPS_USER / VPS_SSH_KEY       - (o CI não toca o cluster)
+#   KUBECONFIG_B64                          -
+#   INFRA_TOKEN                             - (o Flux commita, não o CI)
+#   8 secrets                               0
+#
+# O CI faz UMA coisa: publicar a imagem. Quem descobre a tag nova e atualiza
+# o cluster é o Flux (clusters/production/images.yaml). O repo da aplicação
+# não sabe que o zisp-infra existe, e é por isso que ele não precisa de
+# credencial nenhuma.
+#
+# Some também o ecr-refresh.yml: o pull secret do ECR expirava em 12h e um
+# cron de 8 em 8 horas entrava na VPS por sshpass para recriá-lo. Pacote
+# público no GHCR não tem pull secret.
+name: Build APP_NAME
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['**.md', 'docs/**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: APP_NAME-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          # Token efêmero do próprio run. Não existe em Settings, não vaza,
+          # não precisa rodar.
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build e push
+        run: |
+          set -euo pipefail
+          # <timestamp>-<sha curto>. O timestamp dá ordem numérica para a
+          # ImagePolicy do Flux; o sha responde "qual commit está no ar?",
+          # que é a primeira pergunta de todo incidente. Tag só com sha não
+          # ordena; tag só com data não identifica.
+          TAG="$(date -u +%s)-${GITHUB_SHA::7}"
+          IMAGE="ghcr.io/${{ github.repository_owner }}/APP_NAME"
+
+          docker build -t "$IMAGE:$TAG" .
+          docker push "$IMAGE:$TAG"
+
+          echo "$IMAGE:$TAG" >> "$GITHUB_STEP_SUMMARY"
+          echo "O Flux detecta em até 5 min e commita a tag no zisp-infra." >> "$GITHUB_STEP_SUMMARY"

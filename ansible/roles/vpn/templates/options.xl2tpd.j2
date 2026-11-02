@@ -1,0 +1,18 @@
+# GERENCIADO POR ANSIBLE — infra/ansible/roles/vpn/templates/options.xl2tpd.j2
+ipcp-accept-local
+ipcp-accept-remote
+{% for dns in vpn_dns %}
+ms-dns {{ dns }}
+{% endfor %}
+noccp
+auth
+idle 1800
+mtu {{ vpn_mtu }}
+mru {{ vpn_mru }}
+nodefaultroute
+proxyarp
+connect-delay 0
+# Só MSCHAPv2: PAP manda a senha em claro e CHAP-MD5 é quebrado.
+require-mschap-v2
+refuse-pap
+refuse-chap

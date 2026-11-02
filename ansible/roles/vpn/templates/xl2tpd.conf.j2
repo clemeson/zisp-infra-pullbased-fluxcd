@@ -1,0 +1,17 @@
+# GERENCIADO POR ANSIBLE — infra/ansible/roles/vpn/templates/xl2tpd.conf.j2
+# Mudança feita à mão aqui é sobrescrita na próxima execução do playbook.
+[global]
+port = 1701
+listen-addr = 0.0.0.0
+
+[lns default]
+ip range = {{ vpn_pool_start }} - {{ vpn_pool_end }}
+local ip = {{ vpn_gateway }}
+require chap = no
+refuse pap = yes
+require authentication = yes
+name = l2tpd
+pppoptfile = /etc/ppp/options.xl2tpd
+length bit = yes
+hidden bit = no
+assign ip = yes

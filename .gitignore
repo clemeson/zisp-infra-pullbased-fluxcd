@@ -1,0 +1,13 @@
+# Nada de kubeconfig, chave ou .env com valor neste repositorio. Os segredos
+# vivem no GitHub e entram no cluster pelo workflow de bootstrap.
+*.pem
+*.key
+*.env
+.env
+.env.*
+kubeconfig*
+config-*
+
+# Os moldes SAO versionados: eles nao tem valor, so as chaves e a origem de
+# cada uma. Sem eles ninguem sabe o que precisa preencher.
+!*.env.example

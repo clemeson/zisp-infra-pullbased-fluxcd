@@ -1,0 +1,68 @@
+# Dump do Postgres do zisp-api para o S3.
+#
+# MUDOU DE ALVO: o backup antigo dumpava `postgres-db-svc`, o Postgres que
+# rodava no próprio nó. Esse Postgres não existe mais -- o banco está no
+# Supabase, e foi justamente por nunca ter sido migrado para o nó que ele
+# sobreviveu quando a VPS foi apagada.
+#
+# Continua valendo fazer dump: o Supabase ter backup próprio não é o mesmo que
+# VOCÊ ter o dump. Projeto suspenso por inadimplência, conta encerrada ou
+# `DROP TABLE` acidental não são cobertos pelo backup do fornecedor.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: backup-postgres
+  namespace: zisp
+spec:
+  # 03h de Brasília, fora dos jobs de billing (09h/15h/21h).
+  schedule: "0 3 * * *"
+  timeZone: America/Sao_Paulo
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: dump
+              image: ghcr.io/clemeson/zisp-backup:latest # {"$imagepolicy": "flux-system:zisp-backup"}
+              envFrom:
+                - configMapRef: { name: backup-config }
+                - secretRef: { name: aws-backup-credentials }
+              env:
+                # A MESMA url que a aplicação usa. Vem do Secret dela, não de
+                # uma cópia: duas cópias divergem no dia em que a senha roda.
+                - name: DATABASE_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: zisp-api-env
+                      key: DATABASE_URL
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -eu
+                  STAMP=$(date +%Y%m%d-%H%M%S)
+                  OUT="/tmp/zisp-api-${STAMP}.sql"
+
+                  # -f em vez de pipe para o gzip: num pipe o código de saída
+                  # do pg_dump some e um dump que falhou vira um .gz pequeno
+                  # enviado como se tivesse dado certo. Esse é o modo clássico
+                  # de descobrir, no restore, que não havia backup nenhum.
+                  pg_dump --no-owner --no-acl -f "$OUT" "$DATABASE_URL"
+                  gzip "$OUT"
+
+                  # Falha se o arquivo for pequeno demais para ser um dump
+                  # real. Um dump de 67 tabelas comprimido não chega perto de
+                  # 1KB; se chegou, alguma coisa saiu vazia sem erro.
+                  SIZE=$(stat -c%s "${OUT}.gz")
+                  [ "$SIZE" -gt 1024 ] || { echo "dump suspeito: ${SIZE}B" >&2; exit 1; }
+
+                  aws s3 cp "${OUT}.gz" \
+                    "s3://${S3_BUCKET}/postgres/zisp-api/$(date +%Y/%m)/$(basename "${OUT}.gz")"
+                  echo "ok: $(basename "${OUT}.gz") ${SIZE}B"
+              resources:
+                requests: { cpu: 100m, memory: 128Mi }
+                limits: { cpu: 500m, memory: 512Mi }

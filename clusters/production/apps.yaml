@@ -1,0 +1,24 @@
+# Camada 2: as três APIs do ZISP.
+#
+# dependsOn garante ordem, não só preferência: os HelmRelease montam o Secret
+# zisp-*-env e falam com redis-*-svc, ambos criados pela camada de baixo.
+#
+# `wait: false` de propósito, ao contrário da infraestrutura: um HelmRelease
+# que falha não deve segurar a reconciliação dos outros dois. São produtos
+# independentes que por acaso dividem namespace.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: apps
+  namespace: flux-system
+spec:
+  dependsOn:
+    - name: infrastructure
+  interval: 5m
+  path: ./apps
+  prune: true
+  wait: false
+  timeout: 10m
+  sourceRef:
+    kind: GitRepository
+    name: flux-system

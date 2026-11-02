@@ -1,0 +1,59 @@
+{{- if .Values.migration.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  # Nome com a revisão no sufixo: cada upgrade cria um Job novo e o
+  # anterior fica pra consulta de log.
+  name: {{ include "app.name" . }}-migrate-{{ .Release.Revision }}
+  labels:
+    {{- include "app.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-5"
+    # before-hook-creation (e NÃO hook-succeeded): o Job sobrevive ao
+    # deploy pra você conseguir ler o log da migration depois.
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  backoffLimit: {{ .Values.migration.backoffLimit }}
+  ttlSecondsAfterFinished: {{ .Values.migration.ttlSecondsAfterFinished }}
+  template:
+    metadata:
+      labels:
+        app: {{ include "app.name" . }}-migrate
+    spec:
+      restartPolicy: Never
+      # Mesmo destino do Deployment: se o banco so e alcancavel do no da VPN,
+      # a migracao tambem precisa rodar la.
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: migrate
+          image: {{ include "app.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- if not .Values.migration.command }}
+          {{- fail "migration.enabled is true but migration.command is empty: declare it in the release values" }}
+          {{- end }}
+          command:
+            {{- toYaml .Values.migration.command | nindent 12 }}
+          envFrom:
+            # Só o Secret: em pre-install o ConfigMap do release ainda
+            # não existe. DATABASE_URL precisa estar no Secret.
+            - secretRef:
+                name: {{ include "app.secretName" . }}
+          {{- with .Values.env.extra }}
+          env:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.migration.resources | nindent 12 }}
+{{- end }}

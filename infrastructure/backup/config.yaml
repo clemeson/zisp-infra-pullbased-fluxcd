@@ -1,0 +1,13 @@
+# Destino dos backups. Em ConfigMap, não no Secret: nome de bucket e região
+# não são segredo, e escondê-los só dificulta a leitura. No Secret fica
+# exclusivamente o par de chaves da AWS, criado pelo workflow de bootstrap
+# (ver .github/workflows/bootstrap.yml) -- é o único dado deste cluster que
+# não pode viver em git.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backup-config
+  namespace: zisp
+data:
+  AWS_REGION: "us-east-1"
+  S3_BUCKET: "zisp-backups"

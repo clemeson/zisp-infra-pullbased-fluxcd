@@ -1,0 +1,41 @@
+# Automação de imagem: o que faz este fluxo ser pull-based de verdade.
+#
+# Sem isto, o CI da aplicação teria de escrever neste repositório para mudar a
+# tag -- o que exige um token de escrita em cada repo de app e devolve o
+# acoplamento que o Flux existe para remover. Com isto, o repo da aplicação só
+# publica a imagem; quem descobre a tag nova e commita é o cluster.
+#
+# A credencial de escrita no git já existe: é a deploy key que o
+# `flux bootstrap` criou. Nenhum segredo novo.
+#
+# Os pacotes no GHCR precisam ser PÚBLICOS para o ImageRepository ler sem
+# credencial. São imagens de aplicação sem segredo embutido; se um dia
+# precisarem ser privadas, entra um `secretRef` aqui e um pull secret no
+# namespace.
+---
+apiVersion: image.toolkit.fluxcd.io/v1beta2
+kind: ImageUpdateAutomation
+metadata:
+  name: zisp
+  namespace: flux-system
+spec:
+  interval: 5m
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  git:
+    checkout:
+      ref: { branch: main }
+    commit:
+      author:
+        name: flux
+        email: flux@zisp.com.br
+      messageTemplate: |
+        chore: atualiza imagens
+
+        {{ range .Changed.Changes }}{{ .OldValue }} -> {{ .NewValue }}
+        {{ end }}
+    push: { branch: main }
+  update:
+    path: ./
+    strategy: Setters

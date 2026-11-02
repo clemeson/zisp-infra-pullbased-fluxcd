@@ -1,0 +1,85 @@
+# zisp-api (era `api-core`). API principal: tenants, assinantes, cobrança, e a
+# ponte com o zisp-vpn-api.
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: zisp-api
+  namespace: zisp
+spec:
+  interval: 5m
+  chart:
+    spec:
+      # Chart no próprio repositório: a mesma GitRepository que o Flux já
+      # reconcilia. Sem registry de chart, sem versionamento separado -- o
+      # chart e os values mudam no mesmo commit, e o diff do PR mostra os dois.
+      chart: ./charts/app
+      sourceRef:
+        kind: GitRepository
+        name: flux-system
+        namespace: flux-system
+  install: { remediation: { retries: 2 } }
+  upgrade: { remediation: { retries: 2 } }
+  # Fonte da verdade dos values é aqui, inline. Nada de arquivo espelho
+  # separado que pode divergir.
+  values:
+    nameOverride: zisp-api
+
+    image:
+      repository: ghcr.io/clemeson/zisp-api
+      tag: "0.1.0" # {"$imagepolicy": "flux-system:zisp-api:tag"}
+
+    containerPort: 3030
+    portEnvName: PORT
+
+    replicas: 1
+    # Único serviço que paga o surge: é o que tem tenant batendo o tempo todo.
+    # Custa ~576Mi a mais por ~40s num nó de 4GB. Se apertar, vira Recreate.
+    strategy:
+      type: RollingUpdate
+      rollingUpdate: { maxSurge: 1, maxUnavailable: 0 }
+
+    resources:
+      requests: { cpu: 250m, memory: 320Mi }
+      limits: { cpu: 900m, memory: 576Mi }
+
+    autoscaling: { enabled: false }
+
+    probes:
+      enabled: true
+      path: /health
+      readiness: { initialDelaySeconds: 30, periodSeconds: 5, timeoutSeconds: 2, failureThreshold: 3 }
+      liveness: { initialDelaySeconds: 60, periodSeconds: 15, timeoutSeconds: 3, failureThreshold: 3 }
+
+    env:
+      configMap:
+        enabled: true
+        data:
+          NODE_ENV: "production"
+          DISABLE_OBSERVABILITY: "true"
+          # Mesmo namespace, nome curto resolve. O release do vpn-api chama-se
+          # zisp-vpn-api, logo o Service é zisp-vpn-api-svc -- não api-vpn-svc,
+          # que era o nome no Flux antigo.
+          VPN_API_URL: "http://zisp-vpn-api-svc"
+          REDIS_HOST: "redis-monitor-svc"
+          REDIS_PORT: "6379"
+          REDIS_CLOUD_URL: "redis://redis-bullmq-svc:6379"
+          AWS_S3_BUCKET: "zisp-backups"
+      secret:
+        enabled: true
+        # DATABASE_URL vive aqui e NÃO no ConfigMap: o Job de migração roda em
+        # pre-upgrade e lê só o Secret. Aponta para o Supabase (session pooler,
+        # porta 5432 -- o transaction pooler, 6543, não serve para DDL).
+        name: zisp-api-env
+
+    ingress:
+      enabled: true
+      host: api.zisp.com.br
+      ingressClassName: traefik
+      clusterIssuer: letsencrypt-prod
+
+    # Fecha o buraco das migrations que nunca chegaram em produção: se o
+    # `prisma migrate deploy` falhar, o upgrade falha e o pod velho continua
+    # servindo, em vez de subir código novo contra schema velho.
+    migration:
+      enabled: true
+      command: ["npx", "prisma", "migrate", "deploy"]

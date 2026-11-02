@@ -1,0 +1,18 @@
+# O ClusterIssuer é CRD do cert-manager, então ele só pode ser aplicado depois
+# que o HelmRelease acima instalou os CRDs. O kustomize-controller tenta e
+# reconcilia de novo até passar -- por isso não há dependsOn separado aqui.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: clemeson@zisp.com.br
+    privateKeySecretRef:
+      name: letsencrypt-prod-account-key
+    solvers:
+      - http01:
+          ingress:
+            # traefik vem embutido no k3s; não é instalado por este repositório.
+            ingressClassName: traefik

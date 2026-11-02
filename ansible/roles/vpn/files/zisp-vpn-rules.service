@@ -1,0 +1,15 @@
+# GERENCIADO POR ANSIBLE — infra/ansible/roles/vpn/files/zisp-vpn-rules.service
+[Unit]
+Description=Regras de iptables da VPN L2TP (sem mexer nas do k3s)
+# Depois do k3s: o kube-proxy monta as próprias cadeias no boot, e aplicar as
+# regras da VPN antes disso pode deixá-las na posição errada.
+After=network-online.target k3s.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/zisp-vpn-rules.sh
+
+[Install]
+WantedBy=multi-user.target

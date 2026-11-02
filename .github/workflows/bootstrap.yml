@@ -1,0 +1,122 @@
+# Injeta no cluster o que NÃO pode viver em git.
+#
+# Roda à mão, uma vez por vida de cluster -- não a cada deploy. O deploy do
+# dia a dia é o Flux lendo este repositório; este workflow existe só para o
+# punhado de valores que não podem ser commitados.
+#
+# O QUE MUDOU EM RELAÇÃO AO FLUXO ANTIGO (infra/.github/workflows/):
+#
+#   antes                              agora
+#   ---------------------------------  ------------------------------------
+#   sshpass + VPS_PASSWORD             chave SSH, sem senha em lugar nenhum
+#   root@vps                           usuário sem privilégio + sudo
+#   heredoc com o segredo no comando   stdin: o valor nunca aparece em `ps`
+#   rodava a cada deploy               só workflow_dispatch
+#   KUBECONFIG_B64 como secret fixo    kubeconfig fica na VPS, não viaja
+#   VPS_HOST/AWS_REGION como secret    Variables: visíveis na UI
+#
+# O terceiro item é o que mais importava. `ssh host "kubectl ... --from-literal=$SEGREDO"`
+# põe o valor na linha de comando do processo remoto, visível para qualquer
+# usuário da máquina em `ps aux` e gravado no histórico do shell.
+name: Bootstrap do cluster
+
+on:
+  workflow_dispatch:
+    inputs:
+      what:
+        description: O que sincronizar
+        required: true
+        default: all
+        type: choice
+        options: [all, aws-backup, app-envs]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zisp-bootstrap
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 10
+    steps:
+      - name: Abrir SSH
+        env:
+          SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_HOST: ${{ vars.VPS_HOST }}
+        run: |
+          set -euo pipefail
+          : "${VPS_HOST:?defina a variable VPS_HOST}"
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_vps
+          chmod 600 ~/.ssh/id_vps
+          ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Sincronizar os segredos
+        env:
+          VPS_HOST: ${{ vars.VPS_HOST }}
+          VPS_USER: ${{ vars.VPS_USER }}
+          WHAT: ${{ inputs.what }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          S3_BUCKET: ${{ vars.S3_BUCKET }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          ZISP_API_ENV: ${{ secrets.ZISP_API_ENV }}
+          ZISP_VPN_API_ENV: ${{ secrets.ZISP_VPN_API_ENV }}
+          ZISP_SUPER_API_ENV: ${{ secrets.ZISP_SUPER_API_ENV }}
+        run: |
+          set -euo pipefail
+
+          # kubectl roda NA VPS, com o kubeconfig do k3s que já está lá. O
+          # cluster nunca expõe a 6443 e nenhum kubeconfig vira secret de CI.
+          remote() { ssh -i ~/.ssh/id_vps -o BatchMode=yes "$VPS_USER@$VPS_HOST" "sudo -E k3s kubectl $*"; }
+
+          # O valor chega por STDIN e some com o processo. Nunca entra na
+          # linha de comando. `apply` em vez de `create` para ser idempotente:
+          # rodar duas vezes não dá erro, atualiza.
+          put_env() {
+            local name="$1" body="$2"
+            [ -n "$body" ] || { echo "::error::secret $name está vazio"; return 1; }
+            printf '%s' "$body" | ssh -i ~/.ssh/id_vps -o BatchMode=yes "$VPS_USER@$VPS_HOST" \
+              "sudo -E k3s kubectl create secret generic $name -n zisp \
+                 --from-env-file=/dev/stdin --dry-run=client -o yaml | sudo -E k3s kubectl apply -f -"
+            echo "  $name sincronizado"
+          }
+
+          remote get ns zisp >/dev/null || { echo "::error::namespace zisp não existe. O Flux já reconciliou a infraestrutura?"; exit 1; }
+
+          if [ "$WHAT" = all ] || [ "$WHAT" = aws-backup ]; then
+            echo "== credenciais de backup"
+            : "${AWS_REGION:?defina a variable AWS_REGION}"
+            : "${S3_BUCKET:?defina a variable S3_BUCKET}"
+            # Só o par de chaves. Bucket e região moram no ConfigMap em git
+            # (infrastructure/backup/config.yaml), que é onde dá para ler.
+            put_env aws-backup-credentials "$(printf 'AWS_ACCESS_KEY_ID=%s\nAWS_SECRET_ACCESS_KEY=%s\n' \
+              "$AWS_ACCESS_KEY_ID" "$AWS_SECRET_ACCESS_KEY")"
+          fi
+
+          if [ "$WHAT" = all ] || [ "$WHAT" = app-envs ]; then
+            echo "== env das aplicações"
+            put_env zisp-api-env       "$ZISP_API_ENV"
+            put_env zisp-vpn-api-env   "$ZISP_VPN_API_ENV"
+            put_env zisp-super-api-env "$ZISP_SUPER_API_ENV"
+          fi
+
+          echo "== estado"
+          remote get secret -n zisp -o 'custom-columns=NOME:.metadata.name,CHAVES:.data' \
+            | sed 's/:[^,}]*/:<...>/g'
+
+      - name: Reiniciar quem consome os segredos
+        if: inputs.what == 'all' || inputs.what == 'app-envs'
+        env:
+          VPS_HOST: ${{ vars.VPS_HOST }}
+          VPS_USER: ${{ vars.VPS_USER }}
+        run: |
+          # envFrom injeta no START do container: trocar o Secret não afeta
+          # pod em execução. Sem este passo a mudança só valeria no próximo
+          # deploy, e você acharia que não funcionou.
+          ssh -i ~/.ssh/id_vps -o BatchMode=yes "$VPS_USER@$VPS_HOST" \
+            "sudo -E k3s kubectl rollout restart deploy -n zisp" || true

@@ -1,0 +1,256 @@
+---
+- name: Instalar xl2tpd e ppp
+  ansible.builtin.apt:
+    name: "{{ vpn_packages }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+# ---------------------------------------------------------------------------
+# xl2tpd e ppp
+# ---------------------------------------------------------------------------
+
+- name: Configurar xl2tpd
+  ansible.builtin.template:
+    src: xl2tpd.conf.j2
+    dest: /etc/xl2tpd/xl2tpd.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reiniciar xl2tpd
+
+- name: Configurar opções do ppp
+  ansible.builtin.template:
+    src: options.xl2tpd.j2
+    dest: /etc/ppp/options.xl2tpd
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reiniciar xl2tpd
+
+# force: false é o ponto central aqui. O conteúdo real do chap-secrets é
+# gerenciado pelo zisp-vpn-api, que escreve direto no arquivo via hostPath.
+# Sobrescrever derrubaria TODOS os clientes VPN em campo — foi o que causou o
+# incidente de conciliação que apagou usuários.
+- name: Criar chap-secrets apenas se ausente
+  ansible.builtin.copy:
+    src: chap-secrets.initial
+    dest: /etc/ppp/chap-secrets
+    owner: root
+    group: root
+    mode: "0600"
+    force: false
+
+# ---------------------------------------------------------------------------
+# Hooks de conexão/desconexão
+# ---------------------------------------------------------------------------
+
+# /var/run é symlink pra /run, que é tmpfs: o diretório desaparece a cada
+# boot. O tmpfiles.d recria antes de qualquer serviço precisar dele — sem
+# isso o primeiro ip-up após reboot falha.
+- name: Garantir /run/ppp em todo boot
+  ansible.builtin.copy:
+    dest: /etc/tmpfiles.d/zisp-ppp.conf
+    content: "d /run/ppp 0755 root root -\n"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Criar /var/run/ppp agora
+  ansible.builtin.file:
+    path: /var/run/ppp
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Instalar o rastreador de conexões
+  ansible.builtin.copy:
+    src: zisp-ppp-connections.py
+    dest: /usr/local/sbin/zisp-ppp-connections.py
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Instalar os hooks ip-up/ip-down
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - { src: ip-up-99-zisp-notify, dest: /etc/ppp/ip-up.d/99-zisp-notify }
+    - { src: ip-down-99-zisp-notify, dest: /etc/ppp/ip-down.d/99-zisp-notify }
+
+# O pacote ppp do Debian/Ubuntu já executa ip-up.d/ip-down.d por padrão.
+# force: false porque sobrescrever o /etc/ppp/ip-up de uma instalação que o
+# customizou quebraria outros hooks.
+- name: Rede de segurança — run-parts dos diretórios de hook
+  ansible.builtin.copy:
+    dest: "/etc/ppp/{{ item }}"
+    content: |
+      #!/bin/bash
+      run-parts /etc/ppp/{{ item }}.d 2>/dev/null || true
+    owner: root
+    group: root
+    mode: "0755"
+    force: false
+  loop:
+    - ip-up
+    - ip-down
+
+# ---------------------------------------------------------------------------
+# iptables
+#
+# Por que NÃO usamos iptables-persistent: o k3s programa as próprias regras
+# (kube-proxy, NetworkPolicy, Traefik) e as reconcilia em runtime.
+# `netfilter-persistent save` tiraria um retrato de TODAS as regras — as do
+# k3s inclusive — e restauraria esse retrato velho no próximo boot, quebrando
+# a rede do cluster de um jeito bem difícil de diagnosticar.
+#
+# Em vez disso: uma unit systemd ordenada depois do k3s, que re-aplica só as
+# 3 regras da VPN, de forma idempotente.
+# ---------------------------------------------------------------------------
+
+- name: Instalar o script de regras da VPN
+  ansible.builtin.template:
+    src: zisp-vpn-rules.sh.j2
+    dest: /usr/local/sbin/zisp-vpn-rules.sh
+    owner: root
+    group: root
+    mode: "0750"
+  notify: Reaplicar regras da VPN
+
+- name: Instalar a unit das regras da VPN
+  ansible.builtin.copy:
+    src: zisp-vpn-rules.service
+    dest: /etc/systemd/system/zisp-vpn-rules.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Recarregar o systemd
+
+- name: Habilitar e aplicar as regras da VPN
+  ansible.builtin.systemd_service:
+    name: zisp-vpn-rules.service
+    enabled: true
+    state: started
+    daemon_reload: true
+
+- name: Coletar pacotes instalados
+  ansible.builtin.package_facts:
+    manager: apt
+
+- name: Avisar se o iptables-persistent sobrou de um setup antigo
+  ansible.builtin.debug:
+    msg: >-
+      ATENÇÃO: {{ (['iptables-persistent', 'netfilter-persistent']
+                   | select('in', ansible_facts.packages)) | join(' e ') }}
+      está instalado nesta máquina. Ele restaura um retrato de regras no boot
+      e pode quebrar a rede do k3s.
+      Remova com: apt-get purge -y iptables-persistent netfilter-persistent
+  when: >-
+    'iptables-persistent' in ansible_facts.packages or
+    'netfilter-persistent' in ansible_facts.packages
+
+# ---------------------------------------------------------------------------
+# Firewall do SO
+#
+# O NSG da Azure é separado e é gerenciado pelo Terraform (../terraform/nsg.tf).
+# Isto aqui só trata o ufw, que normalmente está inativo na imagem da Azure.
+# ---------------------------------------------------------------------------
+
+- name: Verificar se o ufw está ativo
+  ansible.builtin.command: ufw status
+  register: vpn_ufw_status
+  changed_when: false
+  failed_when: false
+
+- name: Liberar as portas no ufw
+  ansible.builtin.command: "ufw allow {{ item }}"
+  loop:
+    - 22/tcp
+    - 1701/udp
+  when: "'Status: active' in (vpn_ufw_status.stdout | default(''))"
+  register: vpn_ufw_allow
+  changed_when: "'Rule added' in (vpn_ufw_allow.stdout | default(''))"
+
+# ---------------------------------------------------------------------------
+# Serviço e verificação
+# ---------------------------------------------------------------------------
+
+- name: Habilitar e iniciar o xl2tpd
+  ansible.builtin.systemd_service:
+    name: xl2tpd
+    enabled: true
+    state: started
+
+# Aplica os handlers pendentes antes de verificar, senão a verificação roda
+# contra a configuração antiga.
+- name: Aplicar mudanças pendentes
+  ansible.builtin.meta: flush_handlers
+
+- name: Verificar o socket UDP 1701
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      ss -ulnp | grep -q ':1701'
+    executable: /bin/bash
+  changed_when: false
+  register: vpn_socket
+  failed_when: false
+
+- name: Falhar se o xl2tpd não está escutando
+  ansible.builtin.fail:
+    msg: "xl2tpd não abriu o socket UDP 1701. Veja: journalctl -u xl2tpd -n 50"
+  when: vpn_socket.rc != 0
+
+- name: Verificar a regra de MASQUERADE
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      iptables -t nat -S POSTROUTING | grep -q -- '{{ vpn_network }}'
+    executable: /bin/bash
+  changed_when: false
+  register: vpn_masq
+  failed_when: false
+
+- name: Falhar se o NAT da VPN não está aplicado
+  ansible.builtin.fail:
+    msg: >-
+      MASQUERADE de {{ vpn_network }} ausente. O túnel fecha mas o cliente não
+      alcança a internet. Veja: systemctl status zisp-vpn-rules.service
+  when: vpn_masq.rc != 0
+
+# O domínio é o contrato com os CPEs. Se ele apontar para outro lugar, o
+# xl2tpd sobe, o socket abre, o playbook diz "ok" -- e nenhum Mikrotik conecta.
+# Verificar aqui transforma falha silenciosa em aviso no lugar certo.
+- name: Resolver o domínio da VPN
+  ansible.builtin.command: "getent hosts {{ vpn_hostname }}"
+  register: vpn_dns
+  changed_when: false
+  failed_when: false
+  delegate_to: localhost
+  become: false
+
+- name: Avisar se o domínio não aponta para esta máquina
+  ansible.builtin.debug:
+    msg: >-
+      ATENÇÃO: {{ vpn_hostname }} resolve para
+      "{{ (vpn_dns.stdout | default('') | split | first) | default('NADA', true) }}"
+      e esta máquina é {{ ansible_host }}. Os Mikrotik usam o DOMÍNIO, então
+      até o registro A ser atualizado nenhum túnel fecha. Baixe o TTL antes de
+      migrar: a rerresolução do RouterOS respeita o cache de DNS dele.
+  when: ansible_host not in (vpn_dns.stdout | default(''))
+
+- name: Resumo da VPN
+  ansible.builtin.debug:
+    msg:
+      - "rede VPN:    {{ vpn_network }}"
+      - "gateway:     {{ vpn_gateway }}"
+      - "pool:        {{ vpn_pool_start }} - {{ vpn_pool_end }}"
+      - "IP público:  {{ ansible_host }}"
+      - "DNS:         {{ vpn_hostname }}  <- é ESTE que vai no Mikrotik"
+      - "UDP 1701 precisa estar aberta no firewall — ../terraform/"
+      - "Sem IPsec o tráfego NÃO é cifrado, só autenticado por MSCHAPv2."

@@ -1,0 +1,63 @@
+---
+- name: Verificar se o k3s já está instalado
+  ansible.builtin.command: k3s --version
+  register: k3s_current
+  changed_when: false
+  failed_when: false
+
+# Instala só se ausente ou se a versão não é a desejada. Sem esta guarda, cada
+# execução baixaria e reinstalaria o k3s — reiniciando o cluster inteiro.
+#
+# Baixa e depois executa, em vez de `curl | sh`: num pipe, se o curl falha o
+# `sh` ainda roda com entrada vazia e a tarefa termina com sucesso — instalação
+# que não aconteceu, reportada como OK. Assim o download falha alto.
+- name: Baixar o instalador do k3s
+  ansible.builtin.get_url:
+    url: https://get.k3s.io
+    dest: /tmp/k3s-install.sh
+    owner: root
+    group: root
+    mode: "0700"
+  when: k3s_version not in (k3s_current.stdout | default(''))
+
+- name: Instalar k3s {{ k3s_version }}
+  ansible.builtin.command:
+    cmd: >-
+      /tmp/k3s-install.sh
+      {% for san in k3s_tls_sans %}--tls-san {{ san }} {% endfor %}
+      --write-kubeconfig-mode {{ k3s_kubeconfig_mode }}
+  environment:
+    INSTALL_K3S_VERSION: "{{ k3s_version }}"
+  when: k3s_version not in (k3s_current.stdout | default(''))
+  changed_when: true
+
+- name: Remover o instalador
+  ansible.builtin.file:
+    path: /tmp/k3s-install.sh
+    state: absent
+
+- name: Garantir que o k3s está habilitado e rodando
+  ansible.builtin.systemd_service:
+    name: k3s
+    enabled: true
+    state: started
+
+# Sem esta espera o playbook segue pro role da VPN e o `kubectl` de qualquer
+# passo seguinte falha com "connection refused" — o apiserver leva uns
+# segundos pra responder depois do systemd reportar "active".
+- name: Esperar o apiserver responder
+  ansible.builtin.command: k3s kubectl get --raw /readyz
+  register: k3s_ready
+  until: k3s_ready.rc == 0
+  retries: 30
+  delay: 5
+  changed_when: false
+
+- name: Mostrar o nó
+  ansible.builtin.command: k3s kubectl get nodes -o wide
+  register: k3s_nodes
+  changed_when: false
+
+- name: Resumo do cluster
+  ansible.builtin.debug:
+    msg: "{{ k3s_nodes.stdout_lines }}"

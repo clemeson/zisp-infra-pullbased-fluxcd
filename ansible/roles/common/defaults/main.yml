@@ -1,0 +1,28 @@
+---
+# Módulos do L2TP. Sem o l2tp_ppp o xl2tpd sobe, aceita conexão e o túnel
+# nunca fecha — falha silenciosa clássica em imagem Azure minimizada.
+# `pppol2tp` SAIU da lista. Verificado no kernel 6.8 (Ubuntu 24.04): o modulo
+# nao existe e nao ha alias para ele em modules.alias -- `modprobe pppol2tp`
+# retorna erro e, como a tarefa usa `command`, o play inteiro falhava. Quem
+# fornece o socket PPPoL2TP hoje e o proprio l2tp_ppp.
+#
+# `ppp_generic` tambem fica fora: e builtin desde o 6.x, e /dev/ppp ja nasce
+# no boot. modprobe de builtin retorna 0, mas listar da a falsa impressao de
+# que e carregavel.
+common_l2tp_modules:
+  - l2tp_core
+  - l2tp_netlink
+  - l2tp_ppp
+
+common_packages:
+  - jq
+  - curl
+  - ca-certificates
+  - net-tools
+  - iptables
+  # Meta-pacote que acompanha o kernel -azure e traz os módulos l2tp.
+  - linux-modules-extra-azure
+
+# 10: só encosta no swap sob pressão real. O default (60) faria o kernel
+# paginar Postgres/Redis com RAM livre sobrando.
+common_swappiness: 10

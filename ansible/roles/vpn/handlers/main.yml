@@ -1,0 +1,14 @@
+---
+- name: Reiniciar xl2tpd
+  ansible.builtin.systemd_service:
+    name: xl2tpd
+    state: restarted
+
+- name: Recarregar o systemd
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+
+- name: Reaplicar regras da VPN
+  ansible.builtin.systemd_service:
+    name: zisp-vpn-rules.service
+    state: restarted

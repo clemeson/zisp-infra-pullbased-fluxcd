@@ -1,0 +1,10 @@
+---
+# Modo 600: o kubeconfig dá administração total do cluster. O CI não lê este
+# arquivo direto — ele usa o secret KUBECONFIG_B64 por cima do túnel ssh.
+k3s_kubeconfig_mode: "600"
+
+# O IP público entra no SAN do certificado do apiserver. A 6443 fica FECHADA
+# no NSG (o CI usa túnel), mas tê-lo no SAN agora evita reemitir o certificado
+# se um dia a porta for aberta.
+k3s_tls_sans:
+  - "{{ ansible_host }}"

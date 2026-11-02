@@ -1,0 +1,105 @@
+# Um par ImageRepository + ImagePolicy por imagem.
+#
+# `filterTags` + `numerical` sobre o timestamp: as tags publicadas pelo CI têm
+# a forma <unix-ts>-<sha-curto>, então "mais nova" é uma comparação numérica,
+# não semver. Semver exigiria disciplina de versionamento que estes repos não
+# têm hoje, e ordenação alfabética escolheria a tag errada em silêncio.
+#
+# A tag carrega o SHA junto do timestamp porque o timestamp sozinho não diz
+# QUAL commit está no ar -- e essa é a primeira pergunta num incidente.
+---
+apiVersion: image.toolkit.fluxcd.io/v1beta2
+kind: ImageRepository
+metadata:
+  name: zisp-api
+  namespace: flux-system
+spec:
+  image: ghcr.io/clemeson/zisp-api
+  interval: 5m
+---
+apiVersion: image.toolkit.fluxcd.io/v1beta2
+kind: ImagePolicy
+metadata:
+  name: zisp-api
+  namespace: flux-system
+spec:
+  imageRepositoryRef:
+    name: zisp-api
+  filterTags:
+    pattern: '^(?P<ts>[0-9]+)-[0-9a-f]+$'
+    extract: '$ts'
+  policy:
+    numerical:
+      order: asc
+---
+apiVersion: image.toolkit.fluxcd.io/v1beta2
+kind: ImageRepository
+metadata:
+  name: zisp-vpn-api
+  namespace: flux-system
+spec:
+  image: ghcr.io/clemeson/zisp-vpn-api
+  interval: 5m
+---
+apiVersion: image.toolkit.fluxcd.io/v1beta2
+kind: ImagePolicy
+metadata:
+  name: zisp-vpn-api
+  namespace: flux-system
+spec:
+  imageRepositoryRef:
+    name: zisp-vpn-api
+  filterTags:
+    pattern: '^(?P<ts>[0-9]+)-[0-9a-f]+$'
+    extract: '$ts'
+  policy:
+    numerical:
+      order: asc
+---
+apiVersion: image.toolkit.fluxcd.io/v1beta2
+kind: ImageRepository
+metadata:
+  name: zisp-super-api
+  namespace: flux-system
+spec:
+  image: ghcr.io/clemeson/zisp-super-api
+  interval: 5m
+---
+apiVersion: image.toolkit.fluxcd.io/v1beta2
+kind: ImagePolicy
+metadata:
+  name: zisp-super-api
+  namespace: flux-system
+spec:
+  imageRepositoryRef:
+    name: zisp-super-api
+  filterTags:
+    pattern: '^(?P<ts>[0-9]+)-[0-9a-f]+$'
+    extract: '$ts'
+  policy:
+    numerical:
+      order: asc
+---
+apiVersion: image.toolkit.fluxcd.io/v1beta2
+kind: ImageRepository
+metadata:
+  name: zisp-backup
+  namespace: flux-system
+spec:
+  image: ghcr.io/clemeson/zisp-backup
+  interval: 5m
+---
+apiVersion: image.toolkit.fluxcd.io/v1beta2
+kind: ImagePolicy
+metadata:
+  name: zisp-backup
+  namespace: flux-system
+spec:
+  imageRepositoryRef:
+    name: zisp-backup
+  filterTags:
+    pattern: '^(?P<ts>[0-9]+)-[0-9a-f]+$'
+    extract: '$ts'
+  policy:
+    numerical:
+      order: asc
