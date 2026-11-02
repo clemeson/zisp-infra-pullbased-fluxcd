@@ -8,10 +8,12 @@
 # A credencial de escrita no git já existe: é a deploy key que o
 # `flux bootstrap` criou. Nenhum segredo novo.
 #
-# Os pacotes no GHCR precisam ser PÚBLICOS para o ImageRepository ler sem
-# credencial. São imagens de aplicação sem segredo embutido; se um dia
-# precisarem ser privadas, entra um `secretRef` aqui e um pull secret no
-# namespace.
+# Os pacotes no GHCR são PRIVADOS (código proprietário não deve ser
+# mundialmente legível). Por isso o ImageRepository (em image-policies.yaml)
+# leva um `secretRef: ghcr-pull`, e os pods levam `imagePullSecrets`. O secret
+# é um PAT read:packages, injetado uma vez pelo bootstrap.yml nos namespaces
+# zisp (pull) e flux-system (scan). Ao contrário do token do ECR, ele não
+# expira em 12h, então não há cron de refresh.
 ---
 apiVersion: image.toolkit.fluxcd.io/v1beta2
 kind: ImageUpdateAutomation

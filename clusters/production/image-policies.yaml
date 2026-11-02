@@ -16,6 +16,10 @@ metadata:
 spec:
   image: ghcr.io/clemeson/zisp-api
   interval: 5m
+  # GHCR privado: o scanner precisa de credencial. Mesmo pull secret dos pods,
+  # injetado pelo bootstrap.yml no namespace flux-system.
+  secretRef:
+    name: ghcr-pull
 ---
 apiVersion: image.toolkit.fluxcd.io/v1beta2
 kind: ImagePolicy
@@ -40,6 +44,8 @@ metadata:
 spec:
   image: ghcr.io/clemeson/zisp-vpn-api
   interval: 5m
+  secretRef:
+    name: ghcr-pull
 ---
 apiVersion: image.toolkit.fluxcd.io/v1beta2
 kind: ImagePolicy
@@ -64,6 +70,8 @@ metadata:
 spec:
   image: ghcr.io/clemeson/zisp-super-api
   interval: 5m
+  secretRef:
+    name: ghcr-pull
 ---
 apiVersion: image.toolkit.fluxcd.io/v1beta2
 kind: ImagePolicy

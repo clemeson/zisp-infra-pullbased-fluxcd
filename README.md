@@ -67,7 +67,7 @@ que roda dentro dele). O `site.yml` para no k3s e não aplica um YAML sequer.
 ### O que o `ecr-refresh` era
 
 Um cron de 8 em 8 horas que entrava na VPS por `sshpass` com a senha de root,
-para recriar um pull secret do ECR que expira em 12h. Pacote público no GHCR
+para recriar um pull secret do ECR que expira em 12h. Pacote privado no GHCR
 não tem pull secret: o workflow inteiro deixa de existir, junto com
 `VPS_PASSWORD`.
 

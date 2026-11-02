@@ -25,7 +25,8 @@
 #
 # Some também o ecr-refresh.yml: o pull secret do ECR expirava em 12h e um
 # cron de 8 em 8 horas entrava na VPS por sshpass para recriá-lo. Pacote
-# público no GHCR não tem pull secret.
+# privado no GHCR usa um pull secret estático (PAT read:packages), que
+# não expira como o token do ECR -- sem cron de refresh.
 name: Build APP_NAME
 
 on:

@@ -24,6 +24,10 @@ spec:
   values:
     nameOverride: zisp-api
 
+    # GHCR privado: pods puxam com este secret (bootstrap.yml cria no ns zisp).
+    imagePullSecrets:
+      - name: ghcr-pull
+
     image:
       repository: ghcr.io/clemeson/zisp-api
       tag: "0.1.0" # {"$imagepolicy": "flux-system:zisp-api:tag"}

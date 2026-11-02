@@ -28,7 +28,7 @@ on:
         required: true
         default: all
         type: choice
-        options: [all, aws-backup, app-envs]
+        options: [all, aws-backup, app-envs, ghcr]
 
 permissions:
   contents: read
@@ -67,6 +67,8 @@ jobs:
           ZISP_API_ENV: ${{ secrets.ZISP_API_ENV }}
           ZISP_VPN_API_ENV: ${{ secrets.ZISP_VPN_API_ENV }}
           ZISP_SUPER_API_ENV: ${{ secrets.ZISP_SUPER_API_ENV }}
+          GHCR_USERNAME: ${{ vars.GHCR_USERNAME }}
+          GHCR_PULL_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
         run: |
           set -euo pipefail
 
@@ -86,6 +88,25 @@ jobs:
             echo "  $name sincronizado"
           }
 
+          # Pull secret do GHCR privado. O token chega por STDIN tambem: o
+          # .dockerconfigjson e montado no runner e canalizado, nunca na linha
+          # de comando remota. Criado em DOIS namespaces: zisp (kubelet puxa a
+          # imagem) e flux-system (o ImageRepository escaneia as tags).
+          put_dockercfg() {
+            local ns="$1"
+            : "${GHCR_USERNAME:?defina a variable GHCR_USERNAME}"
+            [ -n "$GHCR_PULL_TOKEN" ] || { echo "::error::GHCR_PULL_TOKEN vazio"; return 1; }
+            local auth; auth=$(printf '%s:%s' "$GHCR_USERNAME" "$GHCR_PULL_TOKEN" | base64 -w0)
+            printf '{"auths":{"ghcr.io":{"username":"%s","password":"%s","auth":"%s"}}}' \
+              "$GHCR_USERNAME" "$GHCR_PULL_TOKEN" "$auth" \
+            | ssh -i ~/.ssh/id_vps -o BatchMode=yes "$VPS_USER@$VPS_HOST" \
+                "sudo -E k3s kubectl create secret generic ghcr-pull -n $ns \
+                   --type=kubernetes.io/dockerconfigjson \
+                   --from-file=.dockerconfigjson=/dev/stdin --dry-run=client -o yaml \
+                   | sudo -E k3s kubectl apply -f -"
+            echo "  ghcr-pull sincronizado em $ns"
+          }
+
           remote get ns zisp >/dev/null || { echo "::error::namespace zisp não existe. O Flux já reconciliou a infraestrutura?"; exit 1; }
 
           if [ "$WHAT" = all ] || [ "$WHAT" = aws-backup ]; then
@@ -103,6 +124,12 @@ jobs:
             put_env zisp-api-env       "$ZISP_API_ENV"
             put_env zisp-vpn-api-env   "$ZISP_VPN_API_ENV"
             put_env zisp-super-api-env "$ZISP_SUPER_API_ENV"
+          fi
+
+          if [ "$WHAT" = all ] || [ "$WHAT" = ghcr ]; then
+            echo "== pull secret do GHCR privado"
+            put_dockercfg zisp
+            put_dockercfg flux-system
           fi
 
           echo "== estado"
