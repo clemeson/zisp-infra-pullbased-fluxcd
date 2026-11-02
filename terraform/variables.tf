@@ -12,12 +12,12 @@ variable "location" {
 variable "resource_group_name" {
   description = "Resource group. O Terraform CRIA este RG -- use um nome que não exista."
   type        = string
-  default     = "zisp-prod"
+  default     = "zisp-sb_group"
 }
 
 variable "vm_name" {
   type    = string
-  default = "zisp-k3s"
+  default = "zisp-sb"
 }
 
 variable "vm_size" {
@@ -29,7 +29,7 @@ variable "vm_size" {
 variable "admin_username" {
   description = "Usuário sem privilégio. O Ansible e o CI usam sudo; ninguém entra como root."
   type        = string
-  default     = "azureuser"
+  default     = "zispuser"
 }
 
 variable "ssh_public_key_path" {
