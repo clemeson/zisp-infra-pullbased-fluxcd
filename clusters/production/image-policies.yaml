@@ -8,7 +8,7 @@
 # A tag carrega o SHA junto do timestamp porque o timestamp sozinho não diz
 # QUAL commit está no ar -- e essa é a primeira pergunta num incidente.
 ---
-apiVersion: image.toolkit.fluxcd.io/v1beta2
+apiVersion: image.toolkit.fluxcd.io/v1
 kind: ImageRepository
 metadata:
   name: zisp-api
@@ -21,7 +21,7 @@ spec:
   secretRef:
     name: ghcr-pull
 ---
-apiVersion: image.toolkit.fluxcd.io/v1beta2
+apiVersion: image.toolkit.fluxcd.io/v1
 kind: ImagePolicy
 metadata:
   name: zisp-api
@@ -36,7 +36,7 @@ spec:
     numerical:
       order: asc
 ---
-apiVersion: image.toolkit.fluxcd.io/v1beta2
+apiVersion: image.toolkit.fluxcd.io/v1
 kind: ImageRepository
 metadata:
   name: zisp-vpn-api
@@ -47,7 +47,7 @@ spec:
   secretRef:
     name: ghcr-pull
 ---
-apiVersion: image.toolkit.fluxcd.io/v1beta2
+apiVersion: image.toolkit.fluxcd.io/v1
 kind: ImagePolicy
 metadata:
   name: zisp-vpn-api
@@ -62,7 +62,7 @@ spec:
     numerical:
       order: asc
 ---
-apiVersion: image.toolkit.fluxcd.io/v1beta2
+apiVersion: image.toolkit.fluxcd.io/v1
 kind: ImageRepository
 metadata:
   name: zisp-super-api
@@ -73,7 +73,7 @@ spec:
   secretRef:
     name: ghcr-pull
 ---
-apiVersion: image.toolkit.fluxcd.io/v1beta2
+apiVersion: image.toolkit.fluxcd.io/v1
 kind: ImagePolicy
 metadata:
   name: zisp-super-api
@@ -88,7 +88,7 @@ spec:
     numerical:
       order: asc
 ---
-apiVersion: image.toolkit.fluxcd.io/v1beta2
+apiVersion: image.toolkit.fluxcd.io/v1
 kind: ImageRepository
 metadata:
   name: zisp-backup
@@ -99,7 +99,7 @@ spec:
   secretRef:
     name: ghcr-pull
 ---
-apiVersion: image.toolkit.fluxcd.io/v1beta2
+apiVersion: image.toolkit.fluxcd.io/v1
 kind: ImagePolicy
 metadata:
   name: zisp-backup
