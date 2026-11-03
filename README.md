@@ -158,18 +158,39 @@ for R in zisp-api zisp-vpn-api zisp-super-api zisp-backup; do
 done
 ```
 
-Vale também uma política de ciclo de vida: a tag é `<timestamp>-<sha>`, então
-nenhuma imagem é sobrescrita e elas acumulam para sempre.
+### Política de ciclo de vida: 3 imagens
+
+**Aplicada em 03/11/2026 nos quatro repositórios.** A tag é
+`<timestamp>-<sha>`, então nenhuma imagem é sobrescrita e sem política elas
+acumulariam para sempre.
 
 ```bash
 for R in zisp-api zisp-vpn-api zisp-super-api zisp-backup; do
   aws ecr put-lifecycle-policy --repository-name "$R" --region us-east-1 \
     --lifecycle-policy-text '{"rules":[{"rulePriority":1,
-      "description":"mantem as 10 mais recentes",
-      "selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":10},
+      "description":"mantem as 3 imagens mais recentes",
+      "selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":3},
       "action":{"type":"expire"}}]}'
 done
 ```
+
+Confira o efeito antes com `aws ecr start-lifecycle-policy-preview` +
+`get-lifecycle-policy-preview`: ele lista imagem por imagem o que sairia, sem
+apagar nada. Foi assim que se soube que a aplicação inicial expiraria 28
+imagens (3 + 18 + 7 + 0), todas da topologia antiga e nenhuma em uso.
+
+**A expiração não é imediata.** A AWS documenta até **24h** entre a imagem
+passar a atender o critério e ser apagada. Logo depois do
+`put-lifecycle-policy` o `list-images` ainda mostra tudo — isso não é falha.
+
+> **O que 3 custa: a profundidade de rollback é 3 builds.** E há uma armadilha
+> que vale conhecer antes de topar com ela: se o cluster estiver rodando uma
+> imagem que caiu fora das 3 mais recentes, ela é apagada, e o pod deixa de
+> poder ser reagendado ou reiniciado — `ImagePullBackOff` numa imagem que
+> "estava funcionando". Em regime normal isso não acontece, porque o Flux
+> sempre sobe a mais nova (que é a #1). O risco aparece se você fixar uma tag
+> antiga à mão, ou fizer rollback e continuar buildando. Nesse caso, suba o
+> `countNumber` antes.
 
 ### Secrets do GitHub
 
