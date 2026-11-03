@@ -518,15 +518,25 @@ vez de no dia em que não houver escolha.
 - **Re-registrar as 5 routerboards** depois de o cluster subir (ver acima).
 - **Remover o alias `vpnServerIp`** das duas APIs, numa segunda passada,
   depois de as duas estarem no ar.
-- **Criar os quatro repositórios no ECR** (`zisp-api`, `zisp-vpn-api`,
-  `zisp-super-api`, `zisp-backup`). Comandos na seção "Criar os repositórios
-  do ECR". O `docker push` não os cria.
+- ~~Criar os quatro repositórios no ECR~~ — **feito em 03/11/2026.** Três já
+  existiam da era anterior (`zisp-api`, `zisp-vpn-api`, `zisp-super-api`); só
+  `zisp-backup` foi criado. Há também um `vpn-api` legado, da nomenclatura
+  antiga, que nada mais referencia e pode ser apagado.
+- **Trocar as chaves de root da AWS por um usuário IAM.** O profile local
+  (`thinkpad`) autentica como `arn:aws:iam::532295959828:root`. Chave de root
+  não aceita policy de permissão — a seção "Permissões IAM necessárias" acima
+  é inaplicável enquanto for esse par, e vazar uma dessas chaves entrega a
+  conta inteira, faturamento incluído. Criar dois usuários (um de push para o
+  CI, um de pull/scan para o cluster), e aí sim as policies valem.
 - **`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` + `AWS_REGION`/`ECR_REGISTRY`
   nos três repos de aplicação**, senão o build falha no login do ECR.
-- **Nenhuma imagem publicada ainda.** Os quatro `ImagePolicy` ficam sem tag e
-  os HelmRelease seguem no placeholder `0.1.0`, que não existe no registry —
-  `ImagePullBackOff` até o primeiro build rodar. Ordem: criar os repos do ECR,
-  rodar os quatro builds, depois o `bootstrap.yml`.
+- **Nenhuma imagem com tag utilizável ainda.** Os repositórios têm imagens
+  antigas, mas **nenhuma** casa com o padrão `<timestamp>-<sha>` do
+  `ImagePolicy` — as tags antigas são `1.0.4-<sha>`, `0.1.0-<sha>` e SHAs
+  puros (verificado em 03/11). Logo os `ImagePolicy` ficam sem tag e os
+  HelmRelease seguem no placeholder `0.1.0`, que não existe no registry:
+  `ImagePullBackOff` até o primeiro build novo rodar. Não é perda — as imagens
+  antigas carregam os fallbacks de IP errados consertados em 02/11.
 - **Federação OIDC GitHub → AWS**, para os repos de aplicação voltarem a zero
   secrets estáticos sem voltar ao GHCR. É o que fecha o buraco que o ECR
   abriu.
