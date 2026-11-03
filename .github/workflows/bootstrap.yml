@@ -97,9 +97,12 @@ jobs:
           # flux-system (o ImageRepository escaneia as tags).
           put_dockercfg() {
             local ns="$1"
-            local auth; auth=$(printf 'AWS:%s' "$ECR_TOKEN" | base64 -w0)
-            printf '{"auths":{"%s":{"username":"AWS","password":"%s","auth":"%s"}}}' \
-              "$ECR_REGISTRY" "$ECR_TOKEN" "$auth" \
+            # jq monta o JSON em vez de printf: senha com ", \ ou / nao quebra
+            # o documento. O token do ECR e base64 e hoje nao tem esses
+            # caracteres, mas isso e propriedade do formato dele, nao contrato.
+            jq -cn --arg reg "$ECR_REGISTRY" --arg pw "$ECR_TOKEN" \
+              '{auths: {($reg): {username: "AWS", password: $pw,
+                                 auth: ("AWS:" + $pw | @base64)}}}' \
             | ssh -i ~/.ssh/id_vps -o BatchMode=yes "$VPS_USER@$VPS_HOST" \
                 "sudo -E k3s kubectl create secret generic ecr-registry -n $ns \
                    --type=kubernetes.io/dockerconfigjson \

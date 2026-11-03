@@ -155,10 +155,22 @@ spec:
           # SEM imagePullSecrets, e é o ponto central: as duas imagens abaixo
           # vêm de registries públicos. Se este pod dependesse do ECR, ele
           # dependeria do secret que ele mesmo existe para criar.
+          # A DIVISÃO DE TRABALHO AQUI É IMPOSTA PELAS IMAGENS, não é estilo.
+          #
+          # `registry.k8s.io/kubectl` é DISTROLESS: entrypoint /bin/kubectl e
+          # nenhum shell. `command: ["/bin/sh","-c"]` nela falha com
+          # "no such file or directory", e um `create | apply` em pipe é
+          # impossível sem shell.
+          #
+          # Então o initContainer (Amazon Linux 2023, tem bash e jq) monta o
+          # manifesto PRONTO, e o container final roda uma invocação só:
+          # `kubectl apply -f`. Ficou melhor do que o pipe original -- um
+          # arquivo com os dois Secrets é um apply atômico, e o manifesto pode
+          # ser inspecionado em `kubectl logs` se algo der errado.
           initContainers:
             # Imagem oficial do AWS CLI v2 no ECR Public: pull anônimo, sem
             # rate limit do Docker Hub.
-            - name: token
+            - name: manifest
               image: public.ecr.aws/aws-cli/aws-cli:2.39.3
               envFrom:
                 - secretRef: { name: aws-ecr-credentials }
@@ -167,40 +179,52 @@ spec:
               args:
                 - |
                   set -eu
-                  # O token sai por STDOUT do aws e vai para um arquivo no
-                  # emptyDir -- nunca para a linha de comando de outro
-                  # processo, que é visível em `ps` para o nó inteiro.
-                  aws ecr get-login-password --region "$AWS_REGION" > /shared/token
+                  TOKEN=$(aws ecr get-login-password --region "$AWS_REGION")
                   # Token vazio com exit 0 produziria um secret válido e
                   # inútil, e o sintoma apareceria só no próximo pull.
-                  [ -s /shared/token ] || { echo "token vazio" >&2; exit 1; }
+                  [ -n "$TOKEN" ] || { echo "token do ECR vazio" >&2; exit 1; }
+
+                  # jq monta o JSON em vez de printf: senha com ", \ ou / não
+                  # quebra o documento. O token do ECR é base64 e hoje não tem
+                  # esses caracteres, mas isso é propriedade do formato dele,
+                  # não garantia de contrato.
+                  CFG=$(jq -cn --arg reg "$ECR_REGISTRY" --arg pw "$TOKEN" \
+                    '{auths: {($reg): {username: "AWS", password: $pw,
+                                       auth: ("AWS:" + $pw | @base64)}}}' \
+                    | base64 -w0)
+
+                  # Os dois consumidores: zisp (kubelet puxa) e flux-system
+                  # (ImageRepository escaneia). Um arquivo, um apply.
+                  : > /shared/ecr-registry.yaml
+                  for NS in zisp flux-system; do
+                    cat >> /shared/ecr-registry.yaml <<MANIFEST
+                  ---
+                  apiVersion: v1
+                  kind: Secret
+                  metadata:
+                    name: ecr-registry
+                    namespace: $NS
+                  type: kubernetes.io/dockerconfigjson
+                  data:
+                    .dockerconfigjson: $CFG
+                  MANIFEST
+                  done
+                  echo "manifesto montado para: zisp flux-system"
               volumeMounts:
                 - { name: shared, mountPath: /shared }
               resources:
                 requests: { cpu: 50m, memory: 64Mi }
                 limits: { cpu: 300m, memory: 256Mi }
           containers:
-            # kubectl oficial, na MESMA minor do k3s (v1.36.5+k3s1).
+            # kubectl oficial, na MESMA minor do k3s (v1.36.5+k3s1). Sem
+            # `command`: usa o entrypoint /bin/kubectl da própria imagem.
+            #
+            # `apply` (não `create`) para ser idempotente: create daria
+            # AlreadyExists da segunda execução em diante, e um CronJob que
+            # falha sempre é um CronJob que ninguém olha.
             - name: apply
               image: registry.k8s.io/kubectl:v1.36.5
-              envFrom:
-                - configMapRef: { name: ecr-config }
-              command: ["/bin/sh", "-c"]
-              args:
-                - |
-                  set -eu
-                  # --dry-run=client | apply em vez de create: idempotente.
-                  # create daria AlreadyExists a partir da segunda execução, e
-                  # um CronJob que falha sempre é um CronJob que ninguém olha.
-                  for NS in zisp flux-system; do
-                    kubectl create secret docker-registry ecr-registry -n "$NS" \
-                      --docker-server="$ECR_REGISTRY" \
-                      --docker-username=AWS \
-                      --docker-password="$(cat /shared/token)" \
-                      --dry-run=client -o yaml \
-                      | kubectl apply -f -
-                    echo "ecr-registry renovado em $NS"
-                  done
+              args: ["apply", "-f", "/shared/ecr-registry.yaml"]
               volumeMounts:
                 - { name: shared, mountPath: /shared, readOnly: true }
               resources:
