@@ -28,7 +28,7 @@ on:
         required: true
         default: all
         type: choice
-        options: [all, aws-backup, app-envs, ghcr]
+        options: [all, aws-backup, app-envs, ecr]
 
 permissions:
   contents: read
@@ -67,8 +67,7 @@ jobs:
           ZISP_API_ENV: ${{ secrets.ZISP_API_ENV }}
           ZISP_VPN_API_ENV: ${{ secrets.ZISP_VPN_API_ENV }}
           ZISP_SUPER_API_ENV: ${{ secrets.ZISP_SUPER_API_ENV }}
-          GHCR_USERNAME: ${{ vars.GHCR_USERNAME }}
-          GHCR_PULL_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
+          ECR_REGISTRY: ${{ vars.ECR_REGISTRY }}
         run: |
           set -euo pipefail
 
@@ -88,23 +87,25 @@ jobs:
             echo "  $name sincronizado"
           }
 
-          # Pull secret do GHCR privado. O token chega por STDIN tambem: o
-          # .dockerconfigjson e montado no runner e canalizado, nunca na linha
-          # de comando remota. Criado em DOIS namespaces: zisp (kubelet puxa a
-          # imagem) e flux-system (o ImageRepository escaneia as tags).
+          # Pull secret do ECR. ESTA E SO A PRIMEIRA INJECAO, na vida de um
+          # cluster novo: o token do ECR dura 12h e quem o renova de 8 em 8
+          # horas e o CronJob ecr-refresh, dentro do cluster
+          # (infrastructure/ecr-refresh.yaml). Sem este passo o cluster ficaria
+          # em ImagePullBackOff ate o primeiro disparo do CronJob.
+          #
+          # Criado em DOIS namespaces: zisp (o kubelet puxa a imagem) e
+          # flux-system (o ImageRepository escaneia as tags).
           put_dockercfg() {
             local ns="$1"
-            : "${GHCR_USERNAME:?defina a variable GHCR_USERNAME}"
-            [ -n "$GHCR_PULL_TOKEN" ] || { echo "::error::GHCR_PULL_TOKEN vazio"; return 1; }
-            local auth; auth=$(printf '%s:%s' "$GHCR_USERNAME" "$GHCR_PULL_TOKEN" | base64 -w0)
-            printf '{"auths":{"ghcr.io":{"username":"%s","password":"%s","auth":"%s"}}}' \
-              "$GHCR_USERNAME" "$GHCR_PULL_TOKEN" "$auth" \
+            local auth; auth=$(printf 'AWS:%s' "$ECR_TOKEN" | base64 -w0)
+            printf '{"auths":{"%s":{"username":"AWS","password":"%s","auth":"%s"}}}' \
+              "$ECR_REGISTRY" "$ECR_TOKEN" "$auth" \
             | ssh -i ~/.ssh/id_vps -o BatchMode=yes "$VPS_USER@$VPS_HOST" \
-                "sudo -E k3s kubectl create secret generic ghcr-pull -n $ns \
+                "sudo -E k3s kubectl create secret generic ecr-registry -n $ns \
                    --type=kubernetes.io/dockerconfigjson \
                    --from-file=.dockerconfigjson=/dev/stdin --dry-run=client -o yaml \
                    | sudo -E k3s kubectl apply -f -"
-            echo "  ghcr-pull sincronizado em $ns"
+            echo "  ecr-registry sincronizado em $ns"
           }
 
           remote get ns zisp >/dev/null || { echo "::error::namespace zisp não existe. O Flux já reconciliou a infraestrutura?"; exit 1; }
@@ -126,8 +127,23 @@ jobs:
             put_env zisp-super-api-env "$ZISP_SUPER_API_ENV"
           fi
 
-          if [ "$WHAT" = all ] || [ "$WHAT" = ghcr ]; then
-            echo "== pull secret do GHCR privado"
+          if [ "$WHAT" = all ] || [ "$WHAT" = ecr ]; then
+            echo "== ECR: credencial do CronJob de renovacao"
+            : "${ECR_REGISTRY:?defina a variable ECR_REGISTRY}"
+            : "${AWS_REGION:?defina a variable AWS_REGION}"
+            # Secret PROPRIO, separado do aws-backup-credentials, embora hoje
+            # as duas chaves sejam as mesmas. Separar aqui e o que permite,
+            # depois, dar ao ECR um usuario IAM so-de-leitura sem tocar no
+            # backup -- e vice-versa. Juntar agora custaria essa opcao.
+            put_env aws-ecr-credentials "$(printf 'AWS_ACCESS_KEY_ID=%s\nAWS_SECRET_ACCESS_KEY=%s\n' \
+              "$AWS_ACCESS_KEY_ID" "$AWS_SECRET_ACCESS_KEY")"
+
+            echo "== ECR: primeira injecao do pull secret"
+            # Gerado NO RUNNER, nao na VPS: a VPS nao tem (e nao deve ter)
+            # credencial AWS -- quem precisa dela la dentro e o CronJob, via
+            # Secret, nao o host.
+            ECR_TOKEN=$(aws ecr get-login-password --region "$AWS_REGION")
+            [ -n "$ECR_TOKEN" ] || { echo "::error::aws ecr get-login-password devolveu vazio"; exit 1; }
             put_dockercfg zisp
             put_dockercfg flux-system
           fi

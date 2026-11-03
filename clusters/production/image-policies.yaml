@@ -14,12 +14,12 @@ metadata:
   name: zisp-api
   namespace: flux-system
 spec:
-  image: ghcr.io/clemeson/zisp-api
+  image: 532295959828.dkr.ecr.us-east-1.amazonaws.com/zisp-api
   interval: 5m
-  # GHCR privado: o scanner precisa de credencial. Mesmo pull secret dos pods,
-  # injetado pelo bootstrap.yml no namespace flux-system.
+  # ECR privado: o scanner precisa de credencial. É o mesmo secret que os pods
+  # usam para o pull, mantido no namespace flux-system pelo ecr-refresh.
   secretRef:
-    name: ghcr-pull
+    name: ecr-registry
 ---
 apiVersion: image.toolkit.fluxcd.io/v1
 kind: ImagePolicy
@@ -42,10 +42,10 @@ metadata:
   name: zisp-vpn-api
   namespace: flux-system
 spec:
-  image: ghcr.io/clemeson/zisp-vpn-api
+  image: 532295959828.dkr.ecr.us-east-1.amazonaws.com/zisp-vpn-api
   interval: 5m
   secretRef:
-    name: ghcr-pull
+    name: ecr-registry
 ---
 apiVersion: image.toolkit.fluxcd.io/v1
 kind: ImagePolicy
@@ -68,10 +68,10 @@ metadata:
   name: zisp-super-api
   namespace: flux-system
 spec:
-  image: ghcr.io/clemeson/zisp-super-api
+  image: 532295959828.dkr.ecr.us-east-1.amazonaws.com/zisp-super-api
   interval: 5m
   secretRef:
-    name: ghcr-pull
+    name: ecr-registry
 ---
 apiVersion: image.toolkit.fluxcd.io/v1
 kind: ImagePolicy
@@ -94,10 +94,10 @@ metadata:
   name: zisp-backup
   namespace: flux-system
 spec:
-  image: ghcr.io/clemeson/zisp-backup
+  image: 532295959828.dkr.ecr.us-east-1.amazonaws.com/zisp-backup
   interval: 5m
   secretRef:
-    name: ghcr-pull
+    name: ecr-registry
 ---
 apiVersion: image.toolkit.fluxcd.io/v1
 kind: ImagePolicy

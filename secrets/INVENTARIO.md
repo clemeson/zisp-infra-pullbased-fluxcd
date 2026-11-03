@@ -1,6 +1,6 @@
 # Inventário de credenciais
 
-Estado em 02/11/2026. Três listas: o que o CI precisa, o que falta, e o que
+Estado em 03/11/2026. Três listas: o que o CI precisa, o que falta, e o que
 precisa de valor novo.
 
 ---
@@ -16,8 +16,9 @@ O único repositório que fala com o cluster. *Settings → Secrets and variable
 |---|---|---|
 | `VPS_HOST` | IP público da VPS | não é segredo, e é o valor que muda ao trocar de provedor — tem que ser fácil de ver e editar |
 | `VPS_USER` | usuário sudoer (`zisp`) | idem |
-| `AWS_REGION` | região do bucket | idem |
+| `AWS_REGION` | região do bucket e do ECR (`us-east-1`) | idem |
 | `S3_BUCKET` | bucket dos backups | idem |
+| `ECR_REGISTRY` | `532295959828.dkr.ecr.us-east-1.amazonaws.com` | está em toda tag de imagem deste repo; esconder só impede de ler |
 
 Estavam como Secrets no fluxo antigo. Secret é write-only: ninguém conseguia
 conferir para onde o backup ia sem abrir um workflow run.
@@ -27,7 +28,7 @@ conferir para onde o backup ia sem abrir um workflow run.
 | nome | o que é | estado |
 |---|---|---|
 | `VPS_SSH_KEY` | chave privada do usuário sudoer | **criar** junto da VPS (`terraform/`) |
-| `AWS_ACCESS_KEY_ID` | par de acesso ao bucket de backup | **rotar** antes de usar |
+| `AWS_ACCESS_KEY_ID` | par de acesso ao bucket de backup **e ao ECR** | **rotar** antes de usar |
 | `AWS_SECRET_ACCESS_KEY` | idem | **rotar** |
 | `ZISP_API_ENV` | arquivo `.env` inteiro do `zisp-api` | **montar** de `secrets/zisp-api.env.example` |
 | `ZISP_VPN_API_ENV` | idem `zisp-vpn-api` | **montar** |
@@ -36,18 +37,34 @@ conferir para onde o backup ia sem abrir um workflow run.
 Precisa também do environment `production` criado (o `bootstrap.yml` declara
 `environment: production`; sem ele o job não roda).
 
-### Nos repositórios das aplicações: nenhum
+### Nos repositórios das aplicações: dois secrets e duas variables
 
-`zisp-api`, `zisp-vpn-api` e `zisp-super-api` não precisam de secret nenhum.
-O `build.yml` de cada um usa só o `GITHUB_TOKEN`, que o Actions gera por
-execução. O que está lá hoje **deve ser apagado**:
+`zisp-api`, `zisp-vpn-api` e `zisp-super-api`, cada um:
+
+| | nome | o que é |
+|---|---|---|
+| **Secret** | `AWS_ACCESS_KEY_ID` | push no ECR (pode ser o mesmo par do `zisp-infra`) |
+| **Secret** | `AWS_SECRET_ACCESS_KEY` | idem |
+| **Variable** | `AWS_REGION` | `us-east-1` |
+| **Variable** | `ECR_REGISTRY` | `532295959828.dkr.ecr.us-east-1.amazonaws.com` |
+
+São os dois únicos secrets que o ECR custa, e vale dizer às claras: com GHCR
+estes repos ficavam com **zero**, porque o `GITHUB_TOKEN` do run autenticava
+sozinho. A troca foi deliberada (ver README, seção "Por que ECR e não GHCR").
+O caminho para recuperar o zero-secret sem voltar ao GHCR é federação OIDC
+GitHub → AWS.
+
+O que está lá hoje e **deve ser apagado**:
 
 | secret a apagar | por que sai |
 |---|---|
-| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_REGION` | o registry é o GHCR, autenticado pelo token do run |
+| `AWS_REGION` como *secret* | passa a ser Variable, visível na UI |
 | `VPS_HOST` / `VPS_USER` / `VPS_PASSWORD` | o CI não toca o cluster |
 | `PAT_TOKEN` | era escrita no `zisp-k8s` para mudar a tag. Hoje quem commita a tag é o Flux, com a deploy key que o `flux bootstrap` criou |
 | `DATABASE_URL`, `JWT_SECRET`, `AES_KEY`, `VPN_*`, `COGNITO_*`, `BLOG_*`, … | o env ia para um `kubectl create secret` a cada push. Agora entra uma vez pelo `bootstrap.yml` |
+
+`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` **ficam** — são eles que
+autenticam o push no ECR. O resto sai.
 
 Esse último grupo é o motivo de a lista ser longa: o `2-deploy-api.yml`
 recriava o Secret do Kubernetes em cada deploy, então **toda** variável de
@@ -110,3 +127,9 @@ Guardar `AWS_ACCESS_KEY_ID` como secret funciona e é o caminho simples, mas é
 credencial de longa duração — o oposto do que o resto desta arquitetura faz.
 O certo seria OIDC do GitHub para uma role da AWS, trocando o token do run por
 credencial temporária. Não vale fazer agora; vale não esquecer.
+
+Desde 03/11/2026 esse par está em **cinco** lugares, não um: o `zisp-infra` e
+os três repos de aplicação (push no ECR), mais o Secret `aws-ecr-credentials`
+no cluster, que o CronJob `ecr-refresh` usa. Isso aumenta o custo de rotar —
+e é exatamente o argumento a favor do OIDC. As permissões IAM mínimas estão
+no README, seção "Por que ECR e não GHCR".

@@ -19,12 +19,14 @@ spec:
   values:
     nameOverride: zisp-vpn-api
 
-    # GHCR privado: pods puxam com este secret (bootstrap.yml cria no ns zisp).
+    # ECR e privado por natureza: o kubelet puxa com este secret. Criado pelo
+    # bootstrap.yml na vida do cluster e renovado de 8 em 8h pelo CronJob
+    # ecr-refresh (infrastructure/ecr-refresh.yaml) -- token do ECR dura 12h.
     imagePullSecrets:
-      - name: ghcr-pull
+      - name: ecr-registry
 
     image:
-      repository: ghcr.io/clemeson/zisp-vpn-api
+      repository: 532295959828.dkr.ecr.us-east-1.amazonaws.com/zisp-vpn-api
       tag: "0.1.0" # {"$imagepolicy": "flux-system:zisp-vpn-api:tag"}
 
     containerPort: 3000

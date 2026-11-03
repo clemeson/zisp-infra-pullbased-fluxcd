@@ -55,7 +55,7 @@ que roda dentro dele). O `site.yml` para no k3s e não aplica um YAML sequer.
 | CD | Flux | **Flux** | voltou: pull-based, o cluster puxa, o CI não alcança o cluster |
 | Orquestrador | k3s | **k3s** | voltou |
 | Host | bash `setup-l2tp.sh`, 356 linhas | **Ansible** | ficou: idempotente de verdade, com `--check --diff` |
-| Registry | ECR | **GHCR** | mudou: mata o `ecr-refresh` (ver abaixo) |
+| Registry | ECR | **ECR** | voltou: o `ecr-refresh` vira CronJob no cluster (ver abaixo) |
 | Tag da imagem | `sed` + commit pelo CI | **Flux image automation** | mudou: o CI não escreve mais neste repo |
 | Endereço da VPN | IP cravado no CPE | **domínio** | mudou: trocar de provedor deixa de exigir visita a CPE |
 | Segredo de app | `.env` local + `kubectl` manual | **GitHub → workflow → cluster** | mudou: a fonte da verdade sai do laptop |
@@ -64,26 +64,128 @@ que roda dentro dele). O `site.yml` para no k3s e não aplica um YAML sequer.
 | Backup | só Postgres | **Postgres + chap-secrets + Redis** | mudou |
 | Deploy chega ao cluster via | túnel SSH + `KUBECONFIG_B64` | **nada** | mudou: o Flux puxa |
 
-### O que o `ecr-refresh` era
+### Por que ECR e não GHCR
 
-Um cron de 8 em 8 horas que entrava na VPS por `sshpass` com a senha de root,
-para recriar um pull secret do ECR que expira em 12h. Pacote privado no GHCR
-não tem pull secret: o workflow inteiro deixa de existir, junto com
-`VPS_PASSWORD`.
+O ZISP passou pelo GHCR por um dia, em 02/11, com uma justificativa que não
+sobreviveu ao escrutínio: que o GHCR eliminava o `ecr-refresh`. Vale registrar
+o raciocínio inteiro, porque o erro é instrutivo.
 
-### Secrets do GitHub: de 8 para 4
+**O que o `ecr-refresh` era.** Um workflow do GitHub Actions, de 8 em 8 horas,
+que entrava na VPS por `sshpass` com a senha de root para recriar um pull
+secret do ECR que expira em 12h.
 
-Os repos de aplicação ficam com **zero** secrets configurados (o
-`GITHUB_TOKEN` é gerado por execução). Este repo fica com quatro, e só eles
-rodam no workflow de bootstrap:
+**O que se concluiu errado.** Que o problema era o cron, e que trocar de
+registry o mataria. O problema nunca foi o cron — era `sshpass` com senha de
+root, o CI alcançando o cluster, e uma renovação que pararia em silêncio se o
+repositório fosse arquivado. Nada disso é propriedade do ECR; é propriedade
+daquela implementação.
+
+**O que ficou.** O token do ECR continua expirando em 12h — isso é fixo e
+independe da credencial IAM. Quem o renova agora é um CronJob **dentro do
+cluster** ([`infrastructure/ecr-refresh.yaml`](infrastructure/ecr-refresh.yaml)):
+declarativo, em git, sem SSH, sem senha de root, e cobrindo de uma vez os dois
+consumidores — o kubelet puxando no namespace `zisp` e o `ImageRepository` do
+Flux varrendo tags no `flux-system`.
+
+|  | GHCR (02/11) | ECR (03/11) |
+|---|---|---|
+| secrets nos repos de app | **0** (`GITHUB_TOKEN` do run) | 2 (par AWS) |
+| renovação de credencial | nenhuma (PAT não expira) | CronJob no cluster, 8h |
+| configuração no host | nenhuma | nenhuma |
+| ponto único de falha | git + CI + registry na **mesma conta** | registry separado |
+| custo | grátis (pacote privado) | storage + egress AWS→Azure |
+
+**O que decidiu.** O zero-secret do GHCR é real e se perde — é o preço, dito
+sem rodeio. Em troca, o registry deixa de estar na mesma conta que o git e o
+CI. O par de chaves AWS já existia no sistema por causa do S3, então não entra
+credencial de natureza nova; entra em mais três lugares, o que encarece rotar.
+
+**O caminho que recupera os dois.** Federação OIDC GitHub → AWS: o CI troca o
+token do run por credencial temporária da AWS, e os repos de aplicação voltam
+a zero secrets estáticos, com o registry ainda fora do GitHub. É o próximo
+passo natural, não feito agora.
+
+#### O que NÃO foi escolhido, e por quê
+
+O **kubelet credential provider** elimina o pull secret de verdade: um binário
+no host que o kubelet chama no momento do pull, lendo `AWS_ACCESS_KEY_ID` do
+`CredentialProviderConfig` e pedindo um token fresco a cada vez. Tecnicamente
+é a resposta certa para "injetar a credencial da AWS e deixar o k3s puxar".
+
+Não foi escolhido por três custos concretos: o binário não sai de GitHub
+Releases (vem de `artifacts.k8s.io`), exige `--kubelet-arg` no Ansible, e
+ainda deixaria o scan do Flux de fora — este precisaria da credencial AWS
+injetada dentro do `image-reflector-controller`. Numa VM de nó único que é
+reconstruída a cada ciclo de crédito, cada peça no host é uma peça que precisa
+funcionar de novo na máquina nova. O CronJob não toca o host.
+
+Atalho que **não** funciona: pôr as chaves da AWS no `registries.yaml` do k3s.
+O containerd aceita usuário/senha estáticos, e no ECR a senha *é* o token de
+12h — só se moveria o valor que expira para um arquivo no host.
+
+### Permissões IAM necessárias
+
+Dois conjuntos. O par de chaves pode ser o mesmo nos dois (é hoje), mas a
+separação dos Secrets (`aws-backup-credentials` / `aws-ecr-credentials`)
+existe para permitir separar depois sem mexer no resto.
+
+**Pull + scan** (cluster: CronJob `ecr-refresh`, e o Flux por tabela):
+
+```json
+{ "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Action": [
+  "ecr:GetAuthorizationToken", "ecr:BatchCheckLayerAvailability",
+  "ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer",
+  "ecr:DescribeRepositories", "ecr:DescribeImages", "ecr:ListImages"
+], "Resource": "*" }] }
+```
+
+**Push** (CI das aplicações): o acima mais `ecr:PutImage`,
+`ecr:InitiateLayerUpload`, `ecr:UploadLayerPart`, `ecr:CompleteLayerUpload`.
+
+`ecr:CreateRepository` fica **de fora** de propósito: repositório do ECR não
+nasce no `docker push`, e dar essa permissão ao CI faria um erro de digitação
+no nome da imagem criar um repositório novo em silêncio, em vez de falhar alto.
+
+### Criar os repositórios do ECR
+
+Uma vez, por imagem. Sem isto o push falha com
+`name unknown: The repository with name 'x' does not exist`:
+
+```bash
+for R in zisp-api zisp-vpn-api zisp-super-api zisp-backup; do
+  aws ecr create-repository --repository-name "$R" --region us-east-1 \
+    --image-scanning-configuration scanOnPush=true
+done
+```
+
+Vale também uma política de ciclo de vida: a tag é `<timestamp>-<sha>`, então
+nenhuma imagem é sobrescrita e elas acumulam para sempre.
+
+```bash
+for R in zisp-api zisp-vpn-api zisp-super-api zisp-backup; do
+  aws ecr put-lifecycle-policy --repository-name "$R" --region us-east-1 \
+    --lifecycle-policy-text '{"rules":[{"rulePriority":1,
+      "description":"mantem as 10 mais recentes",
+      "selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":10},
+      "action":{"type":"expire"}}]}'
+done
+```
+
+### Secrets do GitHub
+
+No `zisp-infra` — e só eles rodam no workflow de bootstrap:
 
 | | |
 |---|---|
 | **Secrets** | `VPS_SSH_KEY`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `ZISP_*_ENV` |
-| **Variables** (visíveis na UI) | `VPS_HOST`, `VPS_USER`, `AWS_REGION`, `S3_BUCKET` |
+| **Variables** (visíveis na UI) | `VPS_HOST`, `VPS_USER`, `AWS_REGION`, `S3_BUCKET`, `ECR_REGISTRY` |
+
+Em cada repo de aplicação: `AWS_ACCESS_KEY_ID` e `AWS_SECRET_ACCESS_KEY` como
+Secrets, `AWS_REGION` e `ECR_REGISTRY` como Variables.
 
 Saem: `VPS_PASSWORD`, `KUBECONFIG_B64`, `INFRA_TOKEN`, `AWS_REGION` como
 secret. Nenhum deles tinha motivo para ser secreto ou para existir.
+Inventário completo em [`secrets/INVENTARIO.md`](secrets/INVENTARIO.md).
 
 ## Portabilidade: trocar de provedor
 
@@ -108,11 +210,18 @@ cd ansible && ansible-playbook site.yml
 #   (sem terraform:  VPS_HOST=1.2.3.4 ansible-playbook site.yml)
 
 # 4. cluster: o Flux passa a puxar este repositório
-export GITHUB_TOKEN=<PAT com Contents read/write em zisp-infra>
-flux bootstrap github --owner=clemeson --repository=zisp-infra \
-  --branch=main --path=clusters/production --personal
+#    --components-extra NÃO é opcional: sem os dois controllers de imagem o
+#    cluster sobe sem automação de tag, que é o deploy inteiro. Em 02/11 eles
+#    foram adicionados numa segunda passada e o resultado foi um cluster
+#    parado por um dia -- ver "Pendências resolvidas em 03/11/2026".
+export GITHUB_TOKEN=<PAT com Contents read/write em zisp-infra-pullbased-fluxcd>
+flux bootstrap github --owner=clemeson \
+  --repository=zisp-infra-pullbased-fluxcd \
+  --branch=main --path=clusters/production --personal \
+  --components-extra=image-reflector-controller,image-automation-controller
 
-# 5. os quatro segredos
+# 5. os segredos: env das apps, credencial de backup, pull secret do ECR
+#    Espere o namespace `zisp` existir -- o workflow aborta sem ele.
 gh workflow run bootstrap.yml -f what=all
 
 # 6. se precisar, restaure do S3
@@ -120,6 +229,13 @@ aws s3 cp s3://zisp-backups/vpn/chap-secrets.latest /etc/ppp/chap-secrets
 ```
 
 Os passos 3 a 6 não mencionam provedor nenhum.
+
+> **O `terraform/` não tem state hoje.** A VM `zisp-sb` foi criada à mão no
+> portal da Azure, em outra conta, então `terraform output public_ip` volta
+> vazio e o passo 1 descreve um caminho que não foi o usado. O
+> `inventory.sh` cobre isso (`VPS_HOST=20.201.120.152 ansible-playbook
+> site.yml`), mas o repositório diz uma coisa e a realidade é outra — vale
+> consertar na próxima VM, importando o state ou apagando o diretório.
 
 ### O que a VPS NÃO guarda
 
@@ -130,7 +246,7 @@ descartável a máquina:
 |---|---|---|
 | banco | Supabase | nada |
 | manifests, charts, values | git | nada |
-| imagens | GHCR | nada |
+| imagens | ECR | nada |
 | Redis | PVC `local-path` na VPS | **tudo** — é o único estado que a máquina guarda além do chap-secrets |
 | `chap-secrets` | arquivo no host | até 1h (backup horário) |
 | segredos | GitHub | um `workflow run` |
@@ -178,8 +294,8 @@ PVC não cobre: `local-path` é um diretório em
 
 ```
   push no repo da app
-    └─ Actions: build + push ghcr.io/clemeson/<app>:<ts>-<sha>   (0 secrets)
-         └─ Flux ImageRepository varre o GHCR            (5 min)
+    └─ Actions: build + push <conta>.dkr.ecr.<regiao>/<app>:<ts>-<sha>
+         └─ Flux ImageRepository varre o ECR             (5 min)
               └─ ImagePolicy escolhe a maior tag numérica
                    └─ ImageUpdateAutomation commita a tag AQUI
                         └─ Kustomization apps reconcilia       (5 min)
@@ -198,7 +314,8 @@ Mudança de configuração (values, recursos, env não-secreto) é um commit
 ```
 GitRepository zisp-infra
   └─ Kustomization infrastructure   (wait: true)
-       namespace, cert-manager, ClusterIssuer, 2x Redis, 3x CronJob
+       namespace, ecr-refresh, cert-manager, ClusterIssuer, 2x Redis,
+       3x CronJob de backup
        └─ Kustomization apps        (dependsOn: infrastructure)
             HelmRelease zisp-api · zisp-vpn-api · zisp-super-api
 ```
@@ -248,6 +365,49 @@ Três coisas que não são decoração:
 > reais, trocar isso vira o item mais caro de qualquer mudança — e é por isso
 > que foi feito agora, enquanto não há CPE ativo apontando para o IP antigo.
 
+## Pendências resolvidas em 03/11/2026
+
+**O cluster estava parado por um `apiVersion`.** A Kustomization `flux-system`
+ficou `Ready=False` desde 02/11 com `no matches for kind "ImagePolicy" in
+version "image.toolkit.fluxcd.io/v1beta2"`. Como a validação de um objeto
+derruba o apply inteiro, as Kustomizations `infrastructure` e `apps` nunca
+foram criadas — e sem o namespace `zisp` o `bootstrap.yml` também abortava.
+Um cluster vazio por causa de uma linha.
+
+A primeira investigação concluiu cache de descoberta de API velho no
+`kustomize-controller` e indicou um `rollout restart`. Estava errado, e o
+restart não resolveria: o **Flux 2.9.4 serve só `v1`** nas APIs de imagem,
+`v1beta2` foi removida. Verificável no próprio binário:
+
+```
+$ flux install --components-extra=... --export | grep -A3 imagepolicies
+imagepolicies.image.toolkit.fluxcd.io   versions: [ name: v1 ]
+```
+
+Os schemas são idênticos campo por campo, então a correção foi só a string, em
+9 pontos. A lição é a que vale guardar: *"o CRD existe"* e *"o CRD serve esta
+versão"* são afirmações diferentes, e a mensagem de erro do Kubernetes diz
+exatamente qual das duas falhou — `no matches for kind X **in version Y**`.
+
+**O Flux não se gerenciava.** O
+`clusters/production/kustomization.yaml` não listava `flux-system`. Como a
+Kustomization `flux-system` tem `path: ./clusters/production` e o kustomize
+respeita um `kustomization.yaml` explícito quando ele existe, o diretório
+ficava fora do build.
+
+O `gotk-components.yaml` estava **correto** em git — o segundo `flux bootstrap`
+empurrou os seis controllers. Só que o Flux nunca o aplicava: os controllers
+rodavam porque o `bootstrap` os aplicou direto no cluster. A consequência não
+era um cluster errado, era um cluster que só o `flux bootstrap` sabia montar —
+upgrade de Flux deixava de ser um commit aqui.
+
+> Vale como aviso de método: a primeira leitura deste repo concluiu que o
+> `gotk-components.yaml` não tinha os controllers de imagem. Tinha — o clone
+> local estava um commit atrás do remoto. Conferir `git fetch` antes de
+> afirmar o que está "em git" não é formalidade.
+
+**O registry voltou para o ECR.** Ver "Por que ECR e não GHCR".
+
 ## Pendências resolvidas em 02/11/2026
 
 **O gerador de script do `zisp-api` emite domínio.** `connect-to=` passou a
@@ -285,12 +445,14 @@ existe (o Prisma o cria), e `max_connections` é **60** com ~14 em uso — não 
 calculado.
 
 **Os três `build.yml` no lugar dos três `deploy.yml`.** O CI de cada
-aplicação passou a fazer uma coisa: publicar a imagem no GHCR com a tag
-`<timestamp>-<sha>`. Saíram o build no ECR, o `sshpass` na VPS, o
-`kubectl create secret` a cada push e o `PAT_TOKEN` que commitava a tag no
-`zisp-k8s`. De oito secrets por repo para **zero** — o único `secrets.` que
-resta é o `GITHUB_TOKEN`, gerado por execução. No `zisp-api` saiu também o
-`1-setup-vpn.yml`, que já era um stub desabilitado.
+aplicação passou a fazer uma coisa: publicar a imagem com a tag
+`<timestamp>-<sha>`. Saíram o `sshpass` na VPS, o `kubectl create secret` a
+cada push e o `PAT_TOKEN` que commitava a tag no `zisp-k8s`. De oito secrets
+por repo para **dois** (o par da AWS, para o push no ECR). No `zisp-api` saiu
+também o `1-setup-vpn.yml`, que já era um stub desabilitado.
+
+> Em 03/11 o registry voltou do GHCR para o ECR, e o número subiu de zero para
+> dois. O porquê está em "Por que ECR e não GHCR", acima.
 
 **Inventário de credenciais em [`secrets/INVENTARIO.md`](secrets/INVENTARIO.md)**:
 o que o Actions do `zisp-infra` precisa, o que deve ser apagado dos repos das
@@ -356,9 +518,19 @@ vez de no dia em que não houver escolha.
 - **Re-registrar as 5 routerboards** depois de o cluster subir (ver acima).
 - **Remover o alias `vpnServerIp`** das duas APIs, numa segunda passada,
   depois de as duas estarem no ar.
-- **Criar o repositório `clemeson/zisp-infra` no GitHub** e dar o primeiro
-  push. O `git init`, o commit e o remote já estão feitos localmente; falta o
-  repositório existir do outro lado, e o `flux bootstrap` depende dele.
+- **Criar os quatro repositórios no ECR** (`zisp-api`, `zisp-vpn-api`,
+  `zisp-super-api`, `zisp-backup`). Comandos na seção "Criar os repositórios
+  do ECR". O `docker push` não os cria.
+- **`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` + `AWS_REGION`/`ECR_REGISTRY`
+  nos três repos de aplicação**, senão o build falha no login do ECR.
+- **Nenhuma imagem publicada ainda.** Os quatro `ImagePolicy` ficam sem tag e
+  os HelmRelease seguem no placeholder `0.1.0`, que não existe no registry —
+  `ImagePullBackOff` até o primeiro build rodar. Ordem: criar os repos do ECR,
+  rodar os quatro builds, depois o `bootstrap.yml`.
+- **Federação OIDC GitHub → AWS**, para os repos de aplicação voltarem a zero
+  secrets estáticos sem voltar ao GHCR. É o que fecha o buraco que o ECR
+  abriu.
+- **`terraform/` sem state** (ver nota em "Portabilidade").
 - Sem observabilidade. O `LOKI_URL`/`PUSHGATEWAY_URL` que as apps leem não
   têm destino neste cluster.
 - Nó único: manutenção do host é janela de indisponibilidade. É consequência

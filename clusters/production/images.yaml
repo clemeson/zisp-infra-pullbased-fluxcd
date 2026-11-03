@@ -8,12 +8,12 @@
 # A credencial de escrita no git já existe: é a deploy key que o
 # `flux bootstrap` criou. Nenhum segredo novo.
 #
-# Os pacotes no GHCR são PRIVADOS (código proprietário não deve ser
-# mundialmente legível). Por isso o ImageRepository (em image-policies.yaml)
-# leva um `secretRef: ghcr-pull`, e os pods levam `imagePullSecrets`. O secret
-# é um PAT read:packages, injetado uma vez pelo bootstrap.yml nos namespaces
-# zisp (pull) e flux-system (scan). Ao contrário do token do ECR, ele não
-# expira em 12h, então não há cron de refresh.
+# O registry é o ECR (532295959828.dkr.ecr.us-east-1.amazonaws.com), privado.
+# Por isso o ImageRepository (em image-policies.yaml) leva um
+# `secretRef: ecr-registry`, e os pods levam `imagePullSecrets` com o mesmo
+# secret: um para o scan das tags, outro para o pull da imagem, o mesmo
+# objeto. O token do ECR dura 12h e quem o renova é o CronJob em
+# infrastructure/ecr-refresh.yaml, de 8 em 8 horas, dentro do cluster.
 ---
 apiVersion: image.toolkit.fluxcd.io/v1
 kind: ImageUpdateAutomation

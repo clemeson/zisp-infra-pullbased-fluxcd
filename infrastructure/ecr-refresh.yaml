@@ -1,0 +1,214 @@
+# Renovação do pull secret do ECR, dentro do cluster.
+#
+# POR QUE ISSO EXISTE
+#
+# O token do ECR expira em 12h. Isso é fixo e independe da credencial IAM:
+# `aws ecr get-login-password` devolve um token de 12h, e o `password` de um
+# pull secret (ou do registries.yaml do k3s) é justamente esse valor. Injetar
+# AWS_ACCESS_KEY_ID no k3s não resolve -- o containerd aceita usuário/senha
+# estáticos, e aqui a senha é que expira.
+#
+# Quem elimina a renovação de verdade é o kubelet credential provider (um
+# binário no host que o kubelet chama no momento do pull). Não foi o caminho
+# escolhido: exige binário fora de GitHub Releases, args de kubelet no
+# Ansible, e credencial AWS dentro do image-reflector-controller para o scan
+# do Flux. Numa VM de nó único que é reconstruída a cada ciclo de crédito,
+# cada peça no host é uma peça que precisa funcionar de novo na máquina nova.
+#
+# O QUE MUDOU EM RELAÇÃO AO `ecr-refresh` ANTIGO
+#
+# O problema do antigo nunca foi o cron -- era COMO ele rodava: um workflow do
+# GitHub Actions de 8 em 8 horas que entrava na VPS por `sshpass` com a senha
+# de root e dava `kubectl create secret`. Isso significava senha de root num
+# secret de CI, acesso do CI ao cluster, e uma renovação que parava de
+# acontecer se o repositório fosse arquivado -- sem nada no cluster indicando
+# por quê.
+#
+#   antes                              agora
+#   ---------------------------------  ------------------------------------
+#   GitHub Actions + sshpass + root    CronJob no cluster, em git
+#   VPS_PASSWORD como secret           nenhum secret novo
+#   CI alcança o cluster               o cluster se resolve sozinho
+#   so no namespace `main`             zisp (pull) + flux-system (scan)
+#
+# Também cobre os dois consumidores de uma vez: o kubelet puxando as imagens
+# no namespace `zisp` e o ImageRepository do Flux varrendo as tags no
+# `flux-system`. Um mecanismo, não dois.
+#
+# A PRIMEIRA INJEÇÃO NÃO É DAQUI
+#
+# CronJob só roda no horário: até a primeira execução, tudo daria
+# ImagePullBackOff por até 8h. Quem cria o secret na vida de um cluster novo é
+# o `bootstrap.yml -f what=ecr`, que já tem a credencial AWS em mão. Este
+# CronJob mantém fresco o que o bootstrap criou.
+---
+# Endereço do registry em ConfigMap, não em Secret: `532295959828.dkr.ecr...`
+# não é segredo (está em toda tag de imagem, em todo manifesto deste repo) e
+# esconder isso só impede de ler. No Secret fica só o par de chaves da AWS.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ecr-config
+  namespace: zisp
+data:
+  ECR_REGISTRY: "532295959828.dkr.ecr.us-east-1.amazonaws.com"
+  # Mesma região do registry. Repetida de propósito em vez de reaproveitar o
+  # backup-config: o dia em que o bucket de backup mudar de região não deve
+  # mexer em qual ECR o cluster puxa.
+  AWS_REGION: "us-east-1"
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ecr-refresh
+  namespace: zisp
+---
+# RBAC em dois namespaces para a MESMA ServiceAccount: ela vive em `zisp` e
+# precisa escrever também em `flux-system`.
+#
+# `create` em secrets não pode ser restrito por resourceNames -- é limitação
+# do RBAC, não descuido: a autorização acontece antes de o objeto existir, e
+# não há nome para casar. Por isso o verbo `create` é amplo e os verbos que
+# aceitam restrição (`get`, `update`, `patch`) estão travados em
+# `ecr-registry`. O alcance real: criar secret nesses dois namespaces. Não há
+# `list` nem `get` genérico, então esta SA não consegue LER os segredos das
+# aplicações, que é o que importa evitar.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: ecr-refresh
+  namespace: zisp
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [create]
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: [ecr-registry]
+    verbs: [get, update, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ecr-refresh
+  namespace: zisp
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: ecr-refresh
+subjects:
+  - kind: ServiceAccount
+    name: ecr-refresh
+    namespace: zisp
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: ecr-refresh
+  namespace: flux-system
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [create]
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: [ecr-registry]
+    verbs: [get, update, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ecr-refresh
+  namespace: flux-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: ecr-refresh
+subjects:
+  - kind: ServiceAccount
+    name: ecr-refresh
+    namespace: zisp
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: ecr-refresh
+  namespace: zisp
+spec:
+  # De 8 em 8 horas para um token de 12h: uma execução pode falhar inteira e
+  # ainda sobram 4h de margem antes de o secret ficar inválido.
+  schedule: "0 */8 * * *"
+  timeZone: America/Sao_Paulo
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 5
+  # Se o nó estiver fora no horário, renova ao voltar em vez de pular o
+  # ciclo -- com 12h de validade, pular um ciclo é metade da margem.
+  startingDeadlineSeconds: 3600
+  jobTemplate:
+    spec:
+      backoffLimit: 3
+      template:
+        spec:
+          restartPolicy: OnFailure
+          serviceAccountName: ecr-refresh
+          # SEM imagePullSecrets, e é o ponto central: as duas imagens abaixo
+          # vêm de registries públicos. Se este pod dependesse do ECR, ele
+          # dependeria do secret que ele mesmo existe para criar.
+          initContainers:
+            # Imagem oficial do AWS CLI v2 no ECR Public: pull anônimo, sem
+            # rate limit do Docker Hub.
+            - name: token
+              image: public.ecr.aws/aws-cli/aws-cli:2.39.3
+              envFrom:
+                - secretRef: { name: aws-ecr-credentials }
+                - configMapRef: { name: ecr-config }
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -eu
+                  # O token sai por STDOUT do aws e vai para um arquivo no
+                  # emptyDir -- nunca para a linha de comando de outro
+                  # processo, que é visível em `ps` para o nó inteiro.
+                  aws ecr get-login-password --region "$AWS_REGION" > /shared/token
+                  # Token vazio com exit 0 produziria um secret válido e
+                  # inútil, e o sintoma apareceria só no próximo pull.
+                  [ -s /shared/token ] || { echo "token vazio" >&2; exit 1; }
+              volumeMounts:
+                - { name: shared, mountPath: /shared }
+              resources:
+                requests: { cpu: 50m, memory: 64Mi }
+                limits: { cpu: 300m, memory: 256Mi }
+          containers:
+            # kubectl oficial, na MESMA minor do k3s (v1.36.5+k3s1).
+            - name: apply
+              image: registry.k8s.io/kubectl:v1.36.5
+              envFrom:
+                - configMapRef: { name: ecr-config }
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -eu
+                  # --dry-run=client | apply em vez de create: idempotente.
+                  # create daria AlreadyExists a partir da segunda execução, e
+                  # um CronJob que falha sempre é um CronJob que ninguém olha.
+                  for NS in zisp flux-system; do
+                    kubectl create secret docker-registry ecr-registry -n "$NS" \
+                      --docker-server="$ECR_REGISTRY" \
+                      --docker-username=AWS \
+                      --docker-password="$(cat /shared/token)" \
+                      --dry-run=client -o yaml \
+                      | kubectl apply -f -
+                    echo "ecr-registry renovado em $NS"
+                  done
+              volumeMounts:
+                - { name: shared, mountPath: /shared, readOnly: true }
+              resources:
+                requests: { cpu: 50m, memory: 64Mi }
+                limits: { cpu: 200m, memory: 128Mi }
+          volumes:
+            # emptyDir com medium Memory: o token não toca o disco do nó.
+            - name: shared
+              emptyDir:
+                medium: Memory
+                sizeLimit: 1Mi
