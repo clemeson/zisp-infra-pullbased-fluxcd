@@ -1,6 +1,5 @@
-# O ClusterIssuer é CRD do cert-manager, então ele só pode ser aplicado depois
-# que o HelmRelease acima instalou os CRDs. O kustomize-controller tenta e
-# reconcilia de novo até passar -- por isso não há dependsOn separado aqui.
+# O ClusterIssuer depende dos CRDs do cert-manager. A Kustomization
+# infrastructure só reconcilia após cert-manager ficar Ready.
 apiVersion: cert-manager.io/v1
 kind: ClusterIssuer
 metadata:

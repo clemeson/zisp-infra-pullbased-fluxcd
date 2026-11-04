@@ -2,12 +2,10 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - namespace.yaml
-  - repositories.yaml
   # Antes de qualquer coisa que puxe imagem do ECR. A ordem aqui é
   # documentação, não execução: o Flux aplica por tipo (Namespace primeiro) e
   # reconcilia até convergir.
   - ecr-refresh.yaml
-  - cert-manager.yaml
   - cluster-issuer.yaml
   - redis.yaml
   - backup/config.yaml

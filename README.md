@@ -1,5 +1,7 @@
 # zisp-infra
 
+[Fluxograma animado do CI/CD GitOps](docs/fluxo-gitops.html)
+
 Infraestrutura do ZISP: uma VPS, k3s, Flux. Tudo que o ZISP precisa para
 existir está neste repositório, menos quatro segredos e o banco.
 
@@ -334,16 +336,20 @@ Mudança de configuração (values, recursos, env não-secreto) é um commit
 
 ```
 GitRepository zisp-infra
-  └─ Kustomization infrastructure   (wait: true)
-       namespace, ecr-refresh, cert-manager, ClusterIssuer, 2x Redis,
-       3x CronJob de backup
-       └─ Kustomization apps        (dependsOn: infrastructure)
-            HelmRelease zisp-api · zisp-vpn-api · zisp-super-api
+  └─ Kustomization cert-manager     (wait: true)
+       HelmRepository, HelmRelease, CRDs
+       └─ Kustomization infrastructure   (dependsOn: cert-manager; wait: true)
+            namespace, ecr-refresh, ClusterIssuer, 2x Redis,
+            3x CronJob de backup
+            └─ Kustomization apps        (dependsOn: infrastructure)
+                 HelmRelease zisp-api · zisp-vpn-api · zisp-super-api
 ```
 
 `wait: true` na infraestrutura é o que faz o `dependsOn` significar alguma
 coisa: sem ele o Flux marca a camada pronta assim que *aplica* os objetos, e
-as aplicações subiriam contra um Redis que ainda não tem endpoint.
+as aplicações subiriam contra um Redis que ainda não tem endpoint. O
+cert-manager tem sua própria camada porque o `ClusterIssuer` só pode ser
+validado depois que o HelmRelease instalou o CRD correspondente.
 
 ## O domínio da VPN
 

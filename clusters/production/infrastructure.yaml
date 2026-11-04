@@ -9,6 +9,8 @@ metadata:
   name: infrastructure
   namespace: flux-system
 spec:
+  dependsOn:
+    - name: cert-manager
   interval: 10m
   path: ./infrastructure
   prune: true
