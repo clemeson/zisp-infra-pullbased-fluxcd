@@ -1,5 +1,6 @@
 # Build de zisp-backup: publica uma imagem no ECR.
 # Autenticação AWS por OIDC, restrita à main deste repositório.
+# A trust policy da role confere o ID do proprietário, o repositório e a branch.
 # O Flux detecta a nova tag e atualiza o zisp-infra; o CI não acessa o cluster.
 name: Build zisp-backup
 
