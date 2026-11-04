@@ -11,6 +11,7 @@ RUN apk add --no-cache \
       postgresql17-client \
       redis \
       aws-cli \
+      python3 \
       gzip \
       coreutils
 

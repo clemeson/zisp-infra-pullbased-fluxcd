@@ -52,11 +52,20 @@ spec:
                   STAMP=$(date +%Y%m%d-%H%M%S)
                   OUT="/tmp/zisp-api-${STAMP}.sql"
 
+                  # DATABASE_URL é compartilhada com Prisma. Libpq não
+                  # entende connection_limit/schema/pgbouncer, mas deve
+                  # manter parâmetros válidos como sslmode.
+                  DUMP_URL=$(python3 -c 'import os, urllib.parse as u
+                  p = u.urlsplit(os.environ["DATABASE_URL"])
+                  q = [(k, v) for k, v in u.parse_qsl(p.query, keep_blank_values=True)
+                       if k not in {"connection_limit", "schema", "pgbouncer"}]
+                  print(u.urlunsplit(p._replace(query=u.urlencode(q))))')
+
                   # -f em vez de pipe para o gzip: num pipe o código de saída
                   # do pg_dump some e um dump que falhou vira um .gz pequeno
                   # enviado como se tivesse dado certo. Esse é o modo clássico
                   # de descobrir, no restore, que não havia backup nenhum.
-                  pg_dump --no-owner --no-acl -f "$OUT" "$DATABASE_URL"
+                  pg_dump --no-owner --no-acl -f "$OUT" "$DUMP_URL"
                   gzip "$OUT"
 
                   # Falha se o arquivo for pequeno demais para ser um dump
