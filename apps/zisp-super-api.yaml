@@ -14,24 +14,20 @@ spec:
         kind: GitRepository
         name: flux-system
         namespace: flux-system
-  install: { remediation: { retries: 2 } }
-  upgrade: { remediation: { retries: 2 } }
+  install: {remediation: {retries: 2}}
+  upgrade: {remediation: {retries: 2}}
   values:
     nameOverride: zisp-super-api
-
     # ECR e privado por natureza: o kubelet puxa com este secret. Criado pelo
     # bootstrap.yml na vida do cluster e renovado de 8 em 8h pelo CronJob
     # ecr-refresh (infrastructure/ecr-refresh.yaml) -- token do ECR dura 12h.
     imagePullSecrets:
       - name: ecr-registry
-
     image:
       repository: 532295959828.dkr.ecr.us-east-1.amazonaws.com/zisp-super-api
-      tag: "0.1.0" # {"$imagepolicy": "flux-system:zisp-super-api:tag"}
-
+      tag: "1793753534-6fd68c7" # {"$imagepolicy": "flux-system:zisp-super-api:tag"}
     containerPort: 3050
     portEnvName: PORT
-
     # Recreate, e não é por volume: as sessões WhatsApp (Baileys) rodam DENTRO
     # deste processo. Dois pods = dois sockets com as mesmas credenciais de
     # sessão = o WhatsApp derruba a conexão.
@@ -41,21 +37,17 @@ spec:
     # dois pods abrindo Baileys na sessão `zisp-super`. Candidata plausível ao
     # ban do número em 28/09/2026.
     replicas: 1
-    strategy: { type: Recreate }
-
+    strategy: {type: Recreate}
     resources:
-      requests: { cpu: 80m, memory: 240Mi }
-      limits: { cpu: 250m, memory: 400Mi }
-
+      requests: {cpu: 80m, memory: 240Mi}
+      limits: {cpu: 250m, memory: 400Mi}
     # NÃO LIGAR. Mesmo motivo do Recreate: réplica > 1 derruba a sessão.
-    autoscaling: { enabled: false }
-
+    autoscaling: {enabled: false}
     probes:
       enabled: true
       path: /health
-      readiness: { initialDelaySeconds: 5, periodSeconds: 5, timeoutSeconds: 2, failureThreshold: 3 }
-      liveness: { initialDelaySeconds: 10, periodSeconds: 10, timeoutSeconds: 3, failureThreshold: 3 }
-
+      readiness: {initialDelaySeconds: 5, periodSeconds: 5, timeoutSeconds: 2, failureThreshold: 3}
+      liveness: {initialDelaySeconds: 10, periodSeconds: 10, timeoutSeconds: 3, failureThreshold: 3}
     env:
       configMap:
         enabled: true
@@ -84,13 +76,11 @@ spec:
       secret:
         enabled: true
         name: zisp-super-api-env
-
     ingress:
       enabled: true
       # super.zisp.com.br é o painel na Netlify; a API fica no -api.
       host: super-api.zisp.com.br
       ingressClassName: traefik
       clusterIssuer: letsencrypt-prod
-
     # Sem Prisma, sem schema: não há migração.
-    migration: { enabled: false }
+    migration: {enabled: false}
