@@ -30,7 +30,7 @@ spec:
       - name: ecr-registry
     image:
       repository: 532295959828.dkr.ecr.us-east-1.amazonaws.com/zisp-api
-      tag: "1793753188-2386935" # {"$imagepolicy": "flux-system:zisp-api:tag"}
+      tag: "1793755096-8e205d2" # {"$imagepolicy": "flux-system:zisp-api:tag"}
     containerPort: 3030
     portEnvName: PORT
     replicas: 1
