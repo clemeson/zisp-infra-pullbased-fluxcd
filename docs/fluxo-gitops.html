@@ -3,259 +3,117 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="dark">
-  <title>ZISP · Fluxo CI/CD GitOps</title>
+  <title>ZISP · Arquitetura CI/CD pull based</title>
   <style>
-    :root {
-      --bg: #08121e;
-      --panel: #102238;
-      --panel-hi: #17314a;
-      --line: #34516a;
-      --text: #eef7fb;
-      --muted: #a2bbca;
-      --mint: #49e4b4;
-      --blue: #65b8ff;
-      --amber: #ffc675;
-      --radius: 19px;
-    }
-    * { box-sizing: border-box; }
-    html { scroll-behavior: smooth; }
-    body {
-      margin: 0;
-      color: var(--text);
-      background: radial-gradient(circle at 10% 0%, #193852 0, transparent 35%),
-                  radial-gradient(circle at 90% 70%, #173b3f 0, transparent 34%),
-                  var(--bg);
-      font: 16px/1.5 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    }
-    .shell { max-width: 1250px; margin: auto; padding: 38px 24px 70px; }
-    .eyebrow { color: var(--mint); text-transform: uppercase; letter-spacing: .17em; font-size: .75rem; font-weight: 800; }
-    h1 { margin: 8px 0 10px; font-size: clamp(2.4rem, 5vw, 4.5rem); line-height: 1.06; letter-spacing: -.04em; }
-    h2 { margin: 0 0 14px; font-size: 1.35rem; letter-spacing: -.02em; }
-    p { margin: 0; }
-    .intro { max-width: 760px; color: var(--muted); font-size: 1.06rem; }
-    .legend { display: flex; gap: 18px; flex-wrap: wrap; color: var(--muted); font-size: .87rem; margin: 22px 0 28px; }
-    .legend span { display: flex; align-items: center; gap: 8px; }
-    .swatch { width: 11px; height: 11px; border-radius: 50%; background: var(--mint); }
-    .swatch.blue { background: var(--blue); }
-    .swatch.amber { background: var(--amber); }
-    .controls {
-      display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-      background: #0d1d30; border: 1px solid var(--line); border-radius: var(--radius);
-      padding: 13px; margin-bottom: 15px;
-    }
-    button, select {
-      color: var(--text); background: #1a3449; border: 1px solid #42647a;
-      border-radius: 11px; padding: 9px 14px; font: inherit; font-weight: 700;
-      cursor: pointer;
-    }
-    button:hover, select:hover { background: #25465c; }
-    button:focus-visible, select:focus-visible { outline: 3px solid var(--mint); outline-offset: 2px; }
-    .play { background: #0d705c; border-color: var(--mint); min-width: 105px; }
-    .play:hover { background: #119275; }
-    label { color: var(--muted); margin-left: auto; }
-    .progress { height: 6px; background: #21394e; border-radius: 100px; overflow: hidden; margin-bottom: 20px; }
-    .progress > div { width: 0; height: 100%; background: linear-gradient(90deg, var(--blue), var(--mint)); transition: width .45s ease; }
-    .status {
-      display: flex; align-items: flex-start; gap: 13px; min-height: 75px;
-      padding: 16px 20px; background: #133047; border: 1px solid #386981;
-      border-radius: 15px; margin-bottom: 23px;
-    }
-    .status .pulse { width: 12px; height: 12px; flex: none; border-radius: 50%; background: var(--mint); margin-top: 6px; box-shadow: 0 0 0 6px #49e4b422; animation: beacon 1.8s infinite; }
-    .status strong { display: block; }
-    .status small { display: block; color: var(--muted); }
-    .flow {
-      display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 22px;
-      padding: 8px 0 26px;
-    }
-    .step {
-      position: relative; min-height: 170px; padding: 19px 18px 20px;
-      border: 1px solid var(--line); background: var(--panel); border-radius: var(--radius);
-      opacity: .63; transform: scale(.98);
-      transition: transform .35s ease, opacity .35s ease, border-color .35s ease, box-shadow .35s ease, background .35s ease;
-    }
-    .step::after {
-      content: "→"; position: absolute; right: -20px; top: 42%; color: #5b8399; font-size: 1.5rem;
-    }
-    .step:nth-child(4)::after { content: "↙"; right: auto; left: -16px; top: auto; bottom: -43px; }
-    .step:last-child::after { content: none; }
-    .step.active {
-      opacity: 1; transform: scale(1.025); border-color: var(--mint);
-      background: var(--panel-hi); box-shadow: 0 0 0 1px #49e4b440, 0 0 35px #49e4b425;
-    }
-    .step.done { opacity: .9; border-color: #377c7c; transform: none; }
-    .number { color: var(--mint); font-weight: 800; font-size: .8rem; letter-spacing: .12em; }
-    .step h3 { font-size: 1.2rem; margin: 13px 0 7px; line-height: 1.2; }
-    .step p { color: var(--muted); font-size: .9rem; }
-    .tag { display: inline-block; margin-top: 13px; color: #b5e7d7; background: #1b514c; border-radius: 6px; padding: 3px 8px; font-size: .72rem; font-weight: 700; }
-    .side-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 12px; }
-    .side {
-      padding: 21px; border-radius: var(--radius); background: #11253a; border: 1px solid var(--line);
-      border-top: 3px solid var(--blue);
-    }
-    .side:nth-child(2) { border-top-color: var(--mint); }
-    .side:nth-child(3) { border-top-color: var(--amber); }
-    .side h2 { margin-bottom: 8px; }
-    .side p { color: var(--muted); font-size: .93rem; }
-    .side .path { color: var(--text); margin: 12px 0; font-weight: 700; }
-    .foot { color: var(--muted); margin-top: 25px; font-size: .85rem; }
-    code { color: #d2f1e7; }
-    @keyframes beacon { 50% { box-shadow: 0 0 0 11px #49e4b400; } }
-    @media (max-width: 900px) {
-      .flow { grid-template-columns: repeat(2, 1fr); }
-      .step:nth-child(2)::after, .step:nth-child(6)::after { content: "↙"; right: auto; left: -16px; top: auto; bottom: -43px; }
-      .step:nth-child(4)::after { content: "→"; right: -20px; left: auto; top: 42%; bottom: auto; }
-      .side-grid { grid-template-columns: 1fr; }
-    }
-    @media (max-width: 570px) {
-      .shell { padding: 26px 16px 50px; }
-      .flow { grid-template-columns: 1fr; gap: 18px; }
-      .step { min-height: 0; }
-      .step::after, .step:nth-child(2)::after, .step:nth-child(4)::after, .step:nth-child(6)::after {
-        content: "↓"; right: auto; left: 50%; top: auto; bottom: -26px; font-size: 1.25rem;
-      }
-      .step:last-child::after { content: none; }
-      label { margin-left: 0; }
-    }
-    @media (prefers-reduced-motion: reduce) {
-      *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
-    }
+    :root { --ink:#17243a; --muted:#53647b; --line:#c7d8ed; --blue:#1274c8; --cyan:#16b5d3; --green:#15966f; --purple:#7455ba; --orange:#e38a36; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:#eaf1f8; color:var(--ink); font:15px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif; }
+    .sheet { max-width:1480px; margin:24px auto; padding:30px clamp(18px,4vw,60px) 42px; background:#f9fcff; box-shadow:0 20px 70px #27466926; }
+    header { text-align:center; border-bottom:3px solid #d5e3f1; padding-bottom:22px; margin-bottom:28px; }
+    .kicker { color:var(--blue); font-weight:900; letter-spacing:.18em; text-transform:uppercase; font-size:.76rem; }
+    h1 { margin:7px 0 4px; font-size:clamp(2rem,4.6vw,4.5rem); line-height:1; letter-spacing:-.055em; }
+    .sub { max-width:760px; margin:12px auto 0; color:var(--muted); font-size:1.05rem; }
+    .lane-label { display:flex; align-items:center; gap:12px; margin:26px 0 14px; font-size:1.25rem; font-weight:900; text-transform:uppercase; letter-spacing:.04em; }
+    .lane-label:after { content:""; height:3px; flex:1; background:linear-gradient(90deg,var(--blue),#dce8f3); }
+    .lane-label.pull:after { background:linear-gradient(90deg,var(--green),#dce8f3); }
+    .lane { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:24px; }
+    .node { min-width:0; min-height:210px; position:relative; padding:21px 18px 17px; background:white; border:2px solid #c8d9e9; border-radius:18px; text-align:center; box-shadow:0 5px 0 #e8f0f8; transition:background .45s,border-color .45s,box-shadow .45s,transform .45s; }
+    .node:after { content:"➜"; position:absolute; right:-26px; top:45%; color:#7aa2c9; font-size:24px; line-height:1; }
+    .lane .node:last-child:after { content:none; }
+    .node.active { transform:translateY(-5px); border-color:var(--blue); background:#edf8ff; box-shadow:0 10px 30px #218bd43c,0 0 0 5px #2aa5e321; }
+    .pull-lane .node.active { border-color:var(--green); background:#edfcf5; box-shadow:0 10px 30px #16966f38,0 0 0 5px #18bd8a24; }
+    .node.active:after { color:var(--cyan); animation:arrow 1s ease-in-out infinite; }
+    .step { position:absolute; left:15px; top:12px; color:#6b849d; font-size:.72rem; font-weight:900; letter-spacing:.1em; }
+    .brand { height:70px; display:flex; justify-content:center; align-items:center; margin:11px 0 6px; }
+    .brand img { width:62px; height:62px; object-fit:contain; }
+    .brand.duo { gap:8px; }
+    .brand.duo img { width:50px; height:50px; }
+    h2 { font-size:1.12rem; margin:4px 0 7px; line-height:1.15; }
+    .node p { color:var(--muted); font-size:.85rem; margin:0; }
+    .pill { display:inline-block; margin-top:10px; padding:3px 8px; color:#146296; background:#e3f3ff; border-radius:6px; font-size:.69rem; font-weight:800; }
+    .pull-lane .pill { background:#dcf8eb; color:#137758; }
+    .turn { margin:14px 2% 5px auto; width:96%; height:46px; border-right:3px dashed var(--green); border-bottom:3px dashed var(--green); border-radius:0 0 18px 0; position:relative; }
+    .turn:after { content:"▼"; color:var(--green); position:absolute; bottom:-27px; left:-7px; font-size:20px; }
+    .turn span { position:absolute; right:16px; bottom:5px; color:#117b5e; font-size:.72rem; font-weight:900; text-transform:uppercase; white-space:nowrap; }
+    .pull-lane { margin-top:20px; }
+    .runtime { margin-top:35px; border:3px solid #a9cbe5; border-radius:20px; overflow:hidden; background:#f0f7fd; }
+    .runtime-title { background:#0c548a; color:white; padding:12px 20px; font-size:1.22rem; font-weight:900; display:flex; align-items:center; gap:10px; }
+    .runtime-title img { width:34px; height:34px; }
+    .runtime-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:16px; padding:20px; }
+    .service { background:white; border:2px solid #c9ddec; border-radius:14px; padding:16px; min-height:140px; }
+    .service-head { display:flex; align-items:center; gap:12px; font-weight:900; font-size:1.04rem; }
+    .service-head img { width:40px; height:40px; object-fit:contain; }
+    .service p { color:var(--muted); font-size:.85rem; margin:10px 0 0; }
+    .service.active { border-color:var(--blue); box-shadow:0 0 0 5px #2aa5e321; background:#f4fbff; }
+    .support { display:grid; grid-template-columns:repeat(3,1fr); gap:16px; margin-top:30px; }
+    .support-card { border:2px solid #d5dbea; border-radius:16px; padding:18px; background:white; border-top:7px solid var(--purple); }
+    .support-card:nth-child(2) { border-top-color:var(--orange); }
+    .support-card:nth-child(3) { border-top-color:var(--green); }
+    .support-card h3 { margin:0 0 9px; font-size:1.02rem; }
+    .icons { display:flex; align-items:center; gap:9px; margin:8px 0; }
+    .icons img { width:34px; height:34px; object-fit:contain; }
+    .support-card p { color:var(--muted); font-size:.85rem; margin:0; }
+    footer { color:#64758a; font-size:.76rem; margin-top:25px; text-align:center; }
+    @keyframes arrow { 50% { transform:translateX(5px); color:#11c8aa; } }
+    @media(max-width:900px) { .lane { grid-template-columns:repeat(2,1fr); } .node:nth-child(2):after { content:"↳"; top:auto; bottom:-34px; right:4px; } .runtime-grid,.support { grid-template-columns:1fr; } }
+    @media(max-width:560px) { .sheet { margin:0; padding:22px 14px 35px; } .lane { grid-template-columns:1fr; gap:26px; } .node { min-height:0; padding-bottom:20px; } .node:after,.node:nth-child(2):after { content:"▼"; right:calc(50% - 9px); bottom:-27px; top:auto; } .turn span { display:none; } }
+    @media(prefers-reduced-motion:reduce) { *,*:before,*:after { animation:none!important; transition:none!important; } .node.active { transform:none; } }
   </style>
 </head>
 <body>
-  <main class="shell">
-    <div class="eyebrow">ZISP · arquitetura de entrega</div>
-    <h1>Do commit ao k3s</h1>
-    <p class="intro">O CI publica imagens no ECR. O Flux, dentro da VPS, detecta a nova tag, grava a mudança no Git e reconcilia o cluster. Acompanhe cada passagem abaixo.</p>
-    <div class="legend" aria-label="Legenda">
-      <span><i class="swatch"></i> etapa em destaque</span>
-      <span><i class="swatch blue"></i> fluxos de apoio</span>
-      <span><i class="swatch amber"></i> dados e backup</span>
-    </div>
+<main class="sheet">
+  <header>
+    <div class="kicker">ZISP · arquitetura de entrega</div>
+    <h1>CI/CD GitOps pull based</h1>
+    <p class="sub">O GitHub publica imagens no Amazon ECR. O Flux, dentro do k3s na VPS, consulta o registry e o Git, atualiza as versões declaradas e aplica os releases.</p>
+  </header>
 
-    <div class="controls" aria-label="Controles da animação">
-      <button class="play" id="play" type="button" aria-label="Pausar animação">Pausar</button>
-      <button id="back" type="button" aria-label="Etapa anterior">← Anterior</button>
-      <button id="next" type="button" aria-label="Próxima etapa">Próxima →</button>
-      <label for="speed">Velocidade</label>
-      <select id="speed" aria-label="Velocidade da animação">
-        <option value="3600">Lenta</option>
-        <option value="2400" selected>Normal</option>
-        <option value="1300">Rápida</option>
-      </select>
-    </div>
-    <div class="progress" aria-hidden="true"><div id="progress"></div></div>
-    <div class="status" role="status" aria-live="polite">
-      <span class="pulse" aria-hidden="true"></span>
-      <div><strong id="status-title"></strong><small id="status-detail"></small></div>
-    </div>
+  <div class="lane-label">01 · Build e publicação</div>
+  <section class="lane" aria-label="Build e publicação da imagem">
+    <article class="node" data-stage="0"><span class="step">01 / CÓDIGO</span><div class="brand"><img src="assets/fluxo/github.svg" alt="GitHub"></div><h2>Repos das APIs</h2><p>Push na <b>main</b> de zisp-api, zisp-vpn-api ou zisp-super-api.</p><span class="pill">GATILHO</span></article>
+    <article class="node" data-stage="1"><span class="step">02 / CI</span><div class="brand duo"><img src="assets/fluxo/actions.svg" alt="GitHub Actions"><img src="assets/fluxo/docker.svg" alt="Docker"></div><h2>Actions + Docker</h2><p>Workflow constrói a imagem e cria a tag timestamp + SHA.</p><span class="pill">BUILD</span></article>
+    <article class="node" data-stage="2"><span class="step">03 / IDENTIDADE</span><div class="brand"><img src="assets/fluxo/aws.svg" alt="AWS"></div><h2>AWS IAM · OIDC</h2><p>O workflow assume a role de push com credenciais temporárias.</p><span class="pill">SEM CHAVE AWS NO CI</span></article>
+    <article class="node" data-stage="3"><span class="step">04 / REGISTRY</span><div class="brand"><img src="assets/fluxo/ecr.svg" alt="Amazon ECR"></div><h2>Amazon ECR</h2><p>Imagem privada publicada nos repositórios da conta AWS.</p><span class="pill">PUSH DA IMAGEM</span></article>
+  </section>
+  <div class="turn"><span>A VPS inicia o pull</span></div>
 
-    <section aria-label="Fluxo principal de CI/CD">
-      <div class="flow" id="flow">
-        <article class="step" data-title="1 · Commit na aplicação" data-detail="Uma mudança entra na branch main de zisp-api, zisp-vpn-api ou zisp-super-api.">
-          <div class="number">01 / CÓDIGO</div><h3>Push na main</h3>
-          <p>O código da API dispara o workflow de build no próprio repositório.</p><span class="tag">GitHub</span>
-        </article>
-        <article class="step" data-title="2 · Build no CI" data-detail="GitHub Actions troca seu token OIDC por uma credencial AWS temporária e constrói a imagem com tag timestamp-SHA.">
-          <div class="number">02 / CI</div><h3>Build da imagem</h3>
-          <p>OIDC assume uma role IAM restrita à main do repositório.</p><span class="tag">GitHub Actions</span>
-        </article>
-        <article class="step" data-title="3 · Imagem publicada" data-detail="A imagem privada é enviada ao ECR; o CI não acessa o cluster.">
-          <div class="number">03 / REGISTRY</div><h3>Push no ECR</h3>
-          <p>Cada imagem recebe uma tag única no formato timestamp-SHA.</p><span class="tag">Amazon ECR</span>
-        </article>
-        <article class="step" data-title="4 · Flux detecta a tag" data-detail="O ImageRepository varre o ECR com seu pull secret, e a ImagePolicy escolhe a maior tag numérica.">
-          <div class="number">04 / DESCOBERTA</div><h3>Scan + ImagePolicy</h3>
-          <p>O cluster descobre a nova versão sem webhook nem push do CI.</p><span class="tag">Flux</span>
-        </article>
-        <article class="step" data-title="5 · Flux atualiza o Git" data-detail="ImageUpdateAutomation substitui a tag nos manifests e faz commit na main de zisp-infra.">
-          <div class="number">05 / GITOPS</div><h3>Commit da tag</h3>
-          <p>O Git registra exatamente qual imagem deve estar em produção.</p><span class="tag">zisp-infra</span>
-        </article>
-        <article class="step" data-title="6 · Infraestrutura reconciliada" data-detail="Flux instala cert-manager e seus CRDs primeiro; depois aplica ClusterIssuer, Redis, ECR refresh e backups.">
-          <div class="number">06 / PLATAFORMA</div><h3>Flux reconcilia</h3>
-          <p>Cert-manager → infraestrutura → aplicações, com dependências explícitas.</p><span class="tag">k3s · VPS</span>
-        </article>
-        <article class="step" data-title="7 · HelmRelease aplica a versão" data-detail="Cada release lê o chart local. APIs com Prisma executam o Job de migração antes do rollout.">
-          <div class="number">07 / RELEASE</div><h3>Migração + rollout</h3>
-          <p>Três APIs, com estratégia de atualização adequada a cada serviço.</p><span class="tag">Helm</span>
-        </article>
-        <article class="step" data-title="8 · Serviços em produção" data-detail="Traefik publica as APIs por HTTPS com certificados do cert-manager; o vpn-api usa DNS interno e escreve o chap-secrets do host.">
-          <div class="number">08 / EXECUÇÃO</div><h3>APIs no ar</h3>
-          <p>Ingress HTTPS para duas APIs; VPN via xl2tpd no host.</p><span class="tag">Traefik · VPN</span>
-        </article>
-      </div>
-    </section>
+  <div class="lane-label pull">02 · Flux observa e reconcilia</div>
+  <section class="lane pull-lane" aria-label="Flux GitOps pull based">
+    <article class="node" data-stage="4"><span class="step">05 / DESCOBERTA</span><div class="brand duo"><img src="assets/fluxo/flux.svg" alt="Flux"><img src="assets/fluxo/ecr.svg" alt="Amazon ECR"></div><h2>ImageRepository</h2><p>Flux consulta o ECR. ImagePolicy seleciona a tag mais recente.</p><span class="pill">PULL DO REGISTRY</span></article>
+    <article class="node" data-stage="5"><span class="step">06 / VERSÃO</span><div class="brand duo"><img src="assets/fluxo/flux.svg" alt="Flux"><img src="assets/fluxo/github.svg" alt="GitHub"></div><h2>Image Automation</h2><p>Flux grava a nova tag nos manifests do <b>zisp-infra</b>.</p><span class="pill">COMMIT GITOPS</span></article>
+    <article class="node" data-stage="6"><span class="step">07 / ESTADO DESEJADO</span><div class="brand duo"><img src="assets/fluxo/flux.svg" alt="Flux"><img src="assets/fluxo/kubernetes.svg" alt="Kubernetes"></div><h2>Flux + k3s</h2><p>GitRepository e Kustomizations consultam o Git e reconciliam o cluster.</p><span class="pill">PULL DO GIT</span></article>
+    <article class="node" data-stage="7"><span class="step">08 / RELEASE</span><div class="brand duo"><img src="assets/fluxo/helm.svg" alt="Helm"><img src="assets/fluxo/kubernetes.svg" alt="Kubernetes"></div><h2>HelmRelease</h2><p>Jobs Prisma aplicam migrações; Deployments recebem a nova imagem.</p><span class="pill">ROLLOUT</span></article>
+  </section>
 
-    <section class="side-grid" aria-label="Fluxos de apoio">
-      <article class="side">
-        <h2>Bootstrap e segredos</h2>
-        <p>O workflow manual envia os Secrets pelo SSH. O cluster atual foi inicializado localmente; falta configurar os GitHub Secrets para repetir o bootstrap.</p>
-        <p class="path">GitHub Secrets → SSH → Kubernetes Secrets</p>
-        <p>Variáveis das aplicações, credencial de backup e primeiro pull secret do ECR.</p>
-      </article>
-      <article class="side">
-        <h2>Token do ECR</h2>
-        <p>O token de pull expira em 12 horas. Um CronJob no k3s o renova a cada 8 horas para os dois namespaces.</p>
-        <p class="path">CronJob → zisp + flux-system</p>
-        <p>O refresh usa imagens públicas, para não depender do token que renova.</p>
-      </article>
-      <article class="side">
-        <h2>Dados e recuperação</h2>
-        <p>O Postgres fica no Supabase. Redis e chap-secrets vivem na VPS; CronJobs enviam cópias ao S3.</p>
-        <p class="path">Supabase + VPS → snapshots no S3</p>
-        <p>O restore precisa ser testado antes da migração para outra VPS.</p>
-      </article>
-    </section>
-    <p class="foot">Diagrama interativo do fluxo declarado em <code>zisp-infra</code>. O build da imagem de backup segue o mesmo caminho ECR → Flux.</p>
-  </main>
-  <script>
-    (() => {
-      const steps = [...document.querySelectorAll(".step")];
-      const title = document.querySelector("#status-title");
-      const detail = document.querySelector("#status-detail");
-      const progress = document.querySelector("#progress");
-      const play = document.querySelector("#play");
-      const speed = document.querySelector("#speed");
-      let index = 0;
-      let running = true;
-      let timer;
-      function render() {
-        steps.forEach((step, position) => {
-          step.classList.toggle("active", position === index);
-          step.classList.toggle("done", position < index);
-        });
-        title.textContent = steps[index].dataset.title;
-        detail.textContent = steps[index].dataset.detail;
-        progress.style.width = ((index + 1) / steps.length * 100) + "%";
-        play.textContent = running ? "Pausar" : "Reproduzir";
-        play.setAttribute("aria-label", running ? "Pausar animação" : "Reproduzir animação");
-      }
-      function schedule() {
-        clearTimeout(timer);
-        if (running) timer = setTimeout(() => {
-          index = (index + 1) % steps.length;
-          render();
-          schedule();
-        }, Number(speed.value));
-      }
-      function move(delta) {
-        index = (index + delta + steps.length) % steps.length;
-        render();
-        schedule();
-      }
-      play.addEventListener("click", () => {
-        running = !running;
-        render();
-        schedule();
-      });
-      document.querySelector("#back").addEventListener("click", () => move(-1));
-      document.querySelector("#next").addEventListener("click", () => move(1));
-      speed.addEventListener("change", schedule);
-      if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) running = false;
-      render();
-      schedule();
-    })();
-  </script>
+  <section class="runtime" aria-label="Serviços em execução na VPS">
+    <div class="runtime-title"><img src="assets/fluxo/azure.svg" alt="Azure"> VPS Azure · k3s single node · produção</div>
+    <div class="runtime-grid">
+      <article class="service" data-stage="8"><div class="service-head"><img src="assets/fluxo/kubernetes.svg" alt="Kubernetes"> Três APIs</div><p>zisp-api, zisp-vpn-api e zisp-super-api. Traefik expõe duas APIs por HTTPS; a VPN atende pelo host.</p></article>
+      <article class="service"><div class="service-head"><img src="assets/fluxo/letsencrypt.svg" alt="Let's Encrypt"> TLS e ingress</div><p>cert-manager emite certificados Let's Encrypt. Traefik publica api.zisp.com.br e super-api.zisp.com.br.</p></article>
+      <article class="service"><div class="service-head"><img src="assets/fluxo/redis.svg" alt="Redis"> Estado e filas</div><p>Redis BullMQ e Redis Monitor executam no cluster. Postgres da aplicação fica no Supabase.</p></article>
+    </div>
+  </section>
+
+  <div class="lane-label">03 · Fluxos de apoio</div>
+  <section class="support" aria-label="Bootstrap, autenticação ECR e backups">
+    <article class="support-card"><h3>Bootstrap de segredos</h3><div class="icons"><img src="assets/fluxo/github.svg" alt="GitHub"><span>→ SSH →</span><img src="assets/fluxo/kubernetes.svg" alt="Kubernetes"></div><p>O cluster atual foi inicializado localmente. O workflow manual de bootstrap depende da configuração dos GitHub Secrets.</p></article>
+    <article class="support-card"><h3>Renovação do token ECR</h3><div class="icons"><img src="assets/fluxo/aws.svg" alt="AWS"><span>→</span><img src="assets/fluxo/ecr.svg" alt="Amazon ECR"><span>→</span><img src="assets/fluxo/kubernetes.svg" alt="Kubernetes"></div><p>CronJob renova o pull secret a cada 8 horas nos namespaces zisp e flux-system.</p></article>
+    <article class="support-card"><h3>Backup no S3</h3><div class="icons"><img src="assets/fluxo/supabase.svg" alt="Supabase"><img src="assets/fluxo/postgresql.svg" alt="PostgreSQL"><img src="assets/fluxo/redis.svg" alt="Redis"><span>→</span><img src="assets/fluxo/s3.svg" alt="Amazon S3"></div><p>CronJobs enviam dumps de Postgres, Redis e chap-secrets para o Amazon S3.</p></article>
+  </section>
+  <footer>Os logotipos SVG são marcas dos respectivos projetos e serviços. Diagrama baseado nos manifests de produção do zisp-infra.</footer>
+</main>
+<script>
+  (() => {
+    const stages = [...document.querySelectorAll('[data-stage]')];
+    let index = 0;
+    function advance() {
+      stages.forEach((stage, position) => stage.classList.toggle('active', position === index));
+      index = (index + 1) % stages.length;
+    }
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    advance();
+    setInterval(advance, 1500);
+  })();
+</script>
 </body>
 </html>
