@@ -7,10 +7,11 @@ usado para criar os recursos, mas os builds e os pods usam identidades próprias
 ## CI: GitHub OIDC → ECR
 
 Provider: `token.actions.githubusercontent.com`, audience `sts.amazonaws.com`.
-Role: `zisp-github-ecr-push`. A trust policy limita o ID do proprietário,
-os quatro nomes de repositório e a branch `main`. O curinga cobre apenas
-o ID numérico do repositório no formato de subject que o GitHub emitiu nesta
-conta; ele não abre outras branches ou outros nomes.
+Role: `zisp-github-ecr-push`. A trust policy limita os quatro nomes de
+repositório e a branch `main`. Ela aceita os dois formatos de subject
+observados nos runs: o tradicional por nome e o formato com IDs. Neste
+segundo formato, o curinga cobre apenas o ID numérico do repositório; o
+proprietário continua fixo por ID e o nome do repo continua explícito.
 
 Trust policy aplicada:
 
@@ -30,9 +31,13 @@ Trust policy aplicada:
         },
         "StringLike": {
           "token.actions.githubusercontent.com:sub": [
+            "repo:clemeson/zisp-infra-pullbased-fluxcd:ref:refs/heads/main",
             "repo:clemeson@65460839/zisp-infra-pullbased-fluxcd@*:ref:refs/heads/main",
+            "repo:clemeson/zisp-api:ref:refs/heads/main",
             "repo:clemeson@65460839/zisp-api@*:ref:refs/heads/main",
+            "repo:clemeson/zisp-vpn-api:ref:refs/heads/main",
             "repo:clemeson@65460839/zisp-vpn-api@*:ref:refs/heads/main",
+            "repo:clemeson/zisp-super-api:ref:refs/heads/main",
             "repo:clemeson@65460839/zisp-super-api@*:ref:refs/heads/main"
           ]
         }
