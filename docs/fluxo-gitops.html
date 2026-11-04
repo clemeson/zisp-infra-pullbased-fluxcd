@@ -180,9 +180,9 @@
           <div class="number">07 / RELEASE</div><h3>Migração + rollout</h3>
           <p>Três APIs, com estratégia de atualização adequada a cada serviço.</p><span class="tag">Helm</span>
         </article>
-        <article class="step" data-title="8 · Serviços em produção" data-detail="Traefik publica as APIs; o vpn-api usa DNS interno e escreve o chap-secrets do host. A entrada externa HTTPS depende da liberação das portas 80 e 443 no NSG da VPS.">
+        <article class="step" data-title="8 · Serviços em produção" data-detail="Traefik publica as APIs por HTTPS com certificados do cert-manager; o vpn-api usa DNS interno e escreve o chap-secrets do host.">
           <div class="number">08 / EXECUÇÃO</div><h3>APIs no ar</h3>
-          <p>Ingress HTTPS para duas APIs (portas externas pendentes); VPN via xl2tpd no host.</p><span class="tag">Traefik · VPN</span>
+          <p>Ingress HTTPS para duas APIs; VPN via xl2tpd no host.</p><span class="tag">Traefik · VPN</span>
         </article>
       </div>
     </section>
