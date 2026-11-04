@@ -25,7 +25,7 @@ spec:
       - name: ecr-registry
     image:
       repository: 532295959828.dkr.ecr.us-east-1.amazonaws.com/zisp-vpn-api
-      tag: "1793753190-907a246" # {"$imagepolicy": "flux-system:zisp-vpn-api:tag"}
+      tag: "1793755095-8a5b168" # {"$imagepolicy": "flux-system:zisp-vpn-api:tag"}
     containerPort: 3000
     portEnvName: API_PORT
     # Recreate, não RollingUpdate. Dois pods escrevendo o mesmo
