@@ -1,75 +1,40 @@
 # Inventário de credenciais
 
-Estado em 03/11/2026. Três listas: o que o CI precisa, o que falta, e o que
-precisa de valor novo.
+Estado em 04/11/2026. Os builds das quatro imagens usam OIDC e não precisam
+de chaves AWS no GitHub. O bootstrap manual ainda precisa ser configurado
+nos GitHub Secrets para permitir reconstruir o cluster sem o laptop.
 
 ---
 
 ## 1. GitHub Actions do repositório `zisp-infra`
 
-O único repositório que fala com o cluster. *Settings → Secrets and variables
-→ Actions*.
+O workflow de build de `zisp-backup` usa a role OIDC
+`zisp-github-ecr-push`. Não precisa de Secret ou Variable AWS.
 
-### Variables (visíveis na UI, de propósito)
+O workflow manual `bootstrap.yml` usa:
 
-| nome | valor | por quê é Variable |
+| tipo | nomes | finalidade |
 |---|---|---|
-| `VPS_HOST` | IP público da VPS | não é segredo, e é o valor que muda ao trocar de provedor — tem que ser fácil de ver e editar |
-| `VPS_USER` | usuário sudoer (`zisp`) | idem |
-| `AWS_REGION` | região do bucket e do ECR (`us-east-1`) | idem |
-| `S3_BUCKET` | bucket dos backups | idem |
-| `ECR_REGISTRY` | `532295959828.dkr.ecr.us-east-1.amazonaws.com` | está em toda tag de imagem deste repo; esconder só impede de ler |
+| Secrets | `VPS_SSH_KEY` | Entrar na VPS com o usuário sudoer |
+| Secrets | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | Usuário IAM `zisp-k3s-runtime`: pull no ECR e backup no S3 |
+| Secrets | `ZISP_API_ENV`, `ZISP_VPN_API_ENV`, `ZISP_SUPER_API_ENV` | Variáveis sensíveis das aplicações |
+| Variables | `VPS_HOST`, `VPS_USER`, `AWS_REGION`, `S3_BUCKET`, `ECR_REGISTRY` | Endereços e nomes públicos |
 
-Estavam como Secrets no fluxo antigo. Secret é write-only: ninguém conseguia
-conferir para onde o backup ia sem abrir um workflow run.
+O cluster de 04/11 foi inicializado diretamente por SSH usando os arquivos
+locais ignorados pelo Git. Os Secrets acima ainda precisam ser preenchidos
+no GitHub para que o bootstrap seja reproduzível. O environment
+`production` também precisa estar disponível para o job.
 
-### Secrets
+### Nos três repositórios de aplicação
 
-| nome | o que é | estado |
-|---|---|---|
-| `VPS_SSH_KEY` | chave privada do usuário sudoer | **criar** junto da VPS (`terraform/`) |
-| `AWS_ACCESS_KEY_ID` | par de acesso ao bucket de backup **e ao ECR** | **rotar** antes de usar |
-| `AWS_SECRET_ACCESS_KEY` | idem | **rotar** |
-| `ZISP_API_ENV` | arquivo `.env` inteiro do `zisp-api` | **montar** de `secrets/zisp-api.env.example` |
-| `ZISP_VPN_API_ENV` | idem `zisp-vpn-api` | **montar** |
-| `ZISP_SUPER_API_ENV` | idem `zisp-super-api` | **montar** |
+`zisp-api`, `zisp-vpn-api` e `zisp-super-api` usam OIDC. A role
+AWS permite push somente nos quatro repositórios ECR do ZISP, a partir da
+branch `main` desses repositórios e do `zisp-infra`. Não há Secret ou
+Variable AWS necessária nos workflows de build; região e registry estão
+no YAML por não serem segredos.
 
-Precisa também do environment `production` criado (o `bootstrap.yml` declara
-`environment: production`; sem ele o job não roda).
-
-### Nos repositórios das aplicações: dois secrets e duas variables
-
-`zisp-api`, `zisp-vpn-api` e `zisp-super-api`, cada um:
-
-| | nome | o que é |
-|---|---|---|
-| **Secret** | `AWS_ACCESS_KEY_ID` | push no ECR (pode ser o mesmo par do `zisp-infra`) |
-| **Secret** | `AWS_SECRET_ACCESS_KEY` | idem |
-| **Variable** | `AWS_REGION` | `us-east-1` |
-| **Variable** | `ECR_REGISTRY` | `532295959828.dkr.ecr.us-east-1.amazonaws.com` |
-
-São os dois únicos secrets que o ECR custa, e vale dizer às claras: com GHCR
-estes repos ficavam com **zero**, porque o `GITHUB_TOKEN` do run autenticava
-sozinho. A troca foi deliberada (ver README, seção "Por que ECR e não GHCR").
-O caminho para recuperar o zero-secret sem voltar ao GHCR é federação OIDC
-GitHub → AWS.
-
-O que está lá hoje e **deve ser apagado**:
-
-| secret a apagar | por que sai |
-|---|---|
-| `AWS_REGION` como *secret* | passa a ser Variable, visível na UI |
-| `VPS_HOST` / `VPS_USER` / `VPS_PASSWORD` | o CI não toca o cluster |
-| `PAT_TOKEN` | era escrita no `zisp-k8s` para mudar a tag. Hoje quem commita a tag é o Flux, com a deploy key que o `flux bootstrap` criou |
-| `DATABASE_URL`, `JWT_SECRET`, `AES_KEY`, `VPN_*`, `COGNITO_*`, `BLOG_*`, … | o env ia para um `kubectl create secret` a cada push. Agora entra uma vez pelo `bootstrap.yml` |
-
-`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` **ficam** — são eles que
-autenticam o push no ECR. O resto sai.
-
-Esse último grupo é o motivo de a lista ser longa: o `2-deploy-api.yml`
-recriava o Secret do Kubernetes em cada deploy, então **toda** variável de
-ambiente da aplicação tinha que existir como secret de CI — inclusive as que
-não são segredo (`NODE_ENV`, `PORT`, `REDIS_HOST`).
+Secrets antigos de deploy e AWS nos repositórios das aplicações podem ser
+removidos depois de confirmar que nenhum outro workflow os usa.
 
 ---
 
@@ -123,13 +88,8 @@ economiza descobrir *onde* ele é usado; não economiza trocá-lo.
 
 ### Sobre a chave estática da AWS
 
-Guardar `AWS_ACCESS_KEY_ID` como secret funciona e é o caminho simples, mas é
-credencial de longa duração — o oposto do que o resto desta arquitetura faz.
-O certo seria OIDC do GitHub para uma role da AWS, trocando o token do run por
-credencial temporária. Não vale fazer agora; vale não esquecer.
-
-Desde 03/11/2026 esse par está em **cinco** lugares, não um: o `zisp-infra` e
-os três repos de aplicação (push no ECR), mais o Secret `aws-ecr-credentials`
-no cluster, que o CronJob `ecr-refresh` usa. Isso aumenta o custo de rotar —
-e é exatamente o argumento a favor do OIDC. As permissões IAM mínimas estão
-no README, seção "Por que ECR e não GHCR".
+O GitHub Actions usa OIDC e credenciais AWS temporárias. O cluster k3s ainda
+precisa de uma chave IAM para renovar o token do ECR e enviar backups ao S3;
+essa função está o usuário `zisp-k3s-runtime`, com escopo limitado.
+O par root do perfil local `thinkpad` não foi usado no CI ou no cluster.
+Identifique seus outros usos antes de desativá-lo.

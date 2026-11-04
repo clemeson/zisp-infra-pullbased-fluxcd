@@ -78,4 +78,4 @@ spec:
     # servindo, em vez de subir código novo contra schema velho.
     migration:
       enabled: true
-      command: ["npx", "prisma", "migrate", "deploy"]
+      command: ["node", "node_modules/prisma/build/index.js", "migrate", "deploy"]

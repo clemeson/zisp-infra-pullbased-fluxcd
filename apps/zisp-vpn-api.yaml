@@ -96,4 +96,4 @@ spec:
       - {name: ppp-run, mountPath: /var/run/ppp}
     migration:
       enabled: true
-      command: ["npx", "prisma", "migrate", "deploy"]
+      command: ["node", "node_modules/prisma/build/index.js", "migrate", "deploy"]

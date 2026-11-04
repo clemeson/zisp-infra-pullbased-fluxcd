@@ -60,7 +60,7 @@ que roda dentro dele). O `site.yml` para no k3s e não aplica um YAML sequer.
 | Registry | ECR | **ECR** | voltou: o `ecr-refresh` vira CronJob no cluster (ver abaixo) |
 | Tag da imagem | `sed` + commit pelo CI | **Flux image automation** | mudou: o CI não escreve mais neste repo |
 | Endereço da VPN | IP cravado no CPE | **domínio** | mudou: trocar de provedor deixa de exigir visita a CPE |
-| Segredo de app | `.env` local + `kubectl` manual | **GitHub → workflow → cluster** | mudou: a fonte da verdade sai do laptop |
+| Segredo de app | `.env` local + `kubectl` manual | **GitHub → workflow → cluster** | o bootstrap declarativo está pronto; o cluster atual foi inicializado com os arquivos locais enquanto os GitHub Secrets são configurados |
 | Postgres | PVC `local-path` no nó | **Supabase** | mudou: foi o que salvou os dados quando a VPS sumiu |
 | Redis | PVC `local-path` + AOF | **PVC `local-path` + AOF/RDB + snapshot no S3** | ficou, com rede: sobrevive a restart de pod e reboot |
 | Backup | só Postgres | **Postgres + chap-secrets + Redis** | mudou |
@@ -89,23 +89,22 @@ declarativo, em git, sem SSH, sem senha de root, e cobrindo de uma vez os dois
 consumidores — o kubelet puxando no namespace `zisp` e o `ImageRepository` do
 Flux varrendo tags no `flux-system`.
 
-|  | GHCR (02/11) | ECR (03/11) |
+|  | GHCR (02/11) | ECR com OIDC (04/11) |
 |---|---|---|
-| secrets nos repos de app | **0** (`GITHUB_TOKEN` do run) | 2 (par AWS) |
+| secrets exigidos pelos builds | **0** (`GITHUB_TOKEN` do run) | **0** (token OIDC trocado por credencial AWS temporária) |
 | renovação de credencial | nenhuma (PAT não expira) | CronJob no cluster, 8h |
 | configuração no host | nenhuma | nenhuma |
 | ponto único de falha | git + CI + registry na **mesma conta** | registry separado |
 | custo | grátis (pacote privado) | storage + egress AWS→Azure |
 
-**O que decidiu.** O zero-secret do GHCR é real e se perde — é o preço, dito
-sem rodeio. Em troca, o registry deixa de estar na mesma conta que o git e o
-CI. O par de chaves AWS já existia no sistema por causa do S3, então não entra
-credencial de natureza nova; entra em mais três lugares, o que encarece rotar.
-
-**O caminho que recupera os dois.** Federação OIDC GitHub → AWS: o CI troca o
-token do run por credencial temporária da AWS, e os repos de aplicação voltam
-a zero secrets estáticos, com o registry ainda fora do GitHub. É o próximo
-passo natural, não feito agora.
+**O que decidiu.** O ECR mantém o registry fora da conta GitHub. Desde
+04/11/2026, os quatro builds usam a role
+`arn:aws:iam::532295959828:role/zisp-github-ecr-push` por OIDC: não há
+chave AWS nos workflows de build. A trust policy limita o acesso ao ID do
+proprietário, aos quatro repositórios e à branch `main`. O cluster usa
+o usuário IAM `zisp-k3s-runtime` apenas para pull no ECR e backup no S3.
+O perfil AWS local `thinkpad` ainda autentica como root; suas chaves não
+foram copiadas para os builds ou para os pods.
 
 #### O que NÃO foi escolhido, e por quê
 
@@ -127,22 +126,24 @@ O containerd aceita usuário/senha estáticos, e no ECR a senha *é* o token de
 
 ### Permissões IAM necessárias
 
-Dois conjuntos. O par de chaves pode ser o mesmo nos dois (é hoje), mas a
-separação dos Secrets (`aws-backup-credentials` / `aws-ecr-credentials`)
-existe para permitir separar depois sem mexer no resto.
+Dois conjuntos. O cluster usa o usuário IAM `zisp-k3s-runtime`, cujas
+credenciais estão em dois Secrets (`aws-backup-credentials` e
+`aws-ecr-credentials`). Os builds usam a role OIDC
+`zisp-github-ecr-push`, com credenciais temporárias.
 
 **Pull + scan** (cluster: CronJob `ecr-refresh`, e o Flux por tabela):
+`ecr:GetAuthorizationToken` tem `Resource: "*"` por exigência da API.
+`ecr:BatchCheckLayerAvailability`, `ecr:BatchGetImage`,
+`ecr:GetDownloadUrlForLayer`, `ecr:DescribeImages` e `ecr:ListImages`
+ficam limitadas às quatro ARNs de repositório do ZISP.
 
-```json
-{ "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Action": [
-  "ecr:GetAuthorizationToken", "ecr:BatchCheckLayerAvailability",
-  "ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer",
-  "ecr:DescribeRepositories", "ecr:DescribeImages", "ecr:ListImages"
-], "Resource": "*" }] }
-```
+**Push** (CI das aplicações e backup): a role OIDC tem
+`ecr:GetAuthorizationToken` e os verbos de upload apenas nos quatro
+repositórios ZISP do ECR. Não tem permissão S3.
 
-**Push** (CI das aplicações): o acima mais `ecr:PutImage`,
-`ecr:InitiateLayerUpload`, `ecr:UploadLayerPart`, `ecr:CompleteLayerUpload`.
+**Backup** (cluster): o usuário IAM tem `s3:GetObject` e `s3:PutObject`
+apenas nos prefixos `postgres/`, `vpn/` e `redis/` do bucket
+`zisp-backups`; não tem permissão de excluir objetos.
 
 `ecr:CreateRepository` fica **de fora** de propósito: repositório do ECR não
 nasce no `docker push`, e dar essa permissão ao CI faria um erro de digitação
@@ -203,8 +204,9 @@ No `zisp-infra` — e só eles rodam no workflow de bootstrap:
 | **Secrets** | `VPS_SSH_KEY`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `ZISP_*_ENV` |
 | **Variables** (visíveis na UI) | `VPS_HOST`, `VPS_USER`, `AWS_REGION`, `S3_BUCKET`, `ECR_REGISTRY` |
 
-Em cada repo de aplicação: `AWS_ACCESS_KEY_ID` e `AWS_SECRET_ACCESS_KEY` como
-Secrets, `AWS_REGION` e `ECR_REGISTRY` como Variables.
+Os três repos de aplicação e o build da imagem de backup usam OIDC. Não
+precisam de Secrets nem Variables AWS; região e registry são públicos e
+estão definidos nos workflows.
 
 Saem: `VPS_PASSWORD`, `KUBECONFIG_B64`, `INFRA_TOKEN`, `AWS_REGION` como
 secret. Nenhum deles tinha motivo para ser secreto ou para existir.
@@ -549,24 +551,13 @@ vez de no dia em que não houver escolha.
   existiam da era anterior (`zisp-api`, `zisp-vpn-api`, `zisp-super-api`); só
   `zisp-backup` foi criado. Há também um `vpn-api` legado, da nomenclatura
   antiga, que nada mais referencia e pode ser apagado.
-- **Trocar as chaves de root da AWS por um usuário IAM.** O profile local
-  (`thinkpad`) autentica como `arn:aws:iam::532295959828:root`. Chave de root
-  não aceita policy de permissão — a seção "Permissões IAM necessárias" acima
-  é inaplicável enquanto for esse par, e vazar uma dessas chaves entrega a
-  conta inteira, faturamento incluído. Criar dois usuários (um de push para o
-  CI, um de pull/scan para o cluster), e aí sim as policies valem.
-- **`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` + `AWS_REGION`/`ECR_REGISTRY`
-  nos três repos de aplicação**, senão o build falha no login do ECR.
-- **Nenhuma imagem com tag utilizável ainda.** Os repositórios têm imagens
-  antigas, mas **nenhuma** casa com o padrão `<timestamp>-<sha>` do
-  `ImagePolicy` — as tags antigas são `1.0.4-<sha>`, `0.1.0-<sha>` e SHAs
-  puros (verificado em 03/11). Logo os `ImagePolicy` ficam sem tag e os
-  HelmRelease seguem no placeholder `0.1.0`, que não existe no registry:
-  `ImagePullBackOff` até o primeiro build novo rodar. Não é perda — as imagens
-  antigas carregam os fallbacks de IP errados consertados em 02/11.
-- **Federação OIDC GitHub → AWS**, para os repos de aplicação voltarem a zero
-  secrets estáticos sem voltar ao GHCR. É o que fecha o buraco que o ECR
-  abriu.
+- **Sincronizar os GitHub Secrets do bootstrap.** O cluster atual recebeu
+  os valores localmente durante a recuperação. O workflow manual precisa
+  deles para reconstruir uma VPS nova sem depender deste laptop.
+- **Rotar ou desativar as chaves root do perfil local `thinkpad`** depois de
+  identificar todos os usos. CI e cluster já usam identidades IAM próprias.
+- ~~Publicar imagens com tag `<timestamp>-<sha>` e configurar OIDC~~ —
+  **feito em 04/11/2026** nos quatro builds.
 - **`terraform/` sem state** (ver nota em "Portabilidade").
 - Sem observabilidade. O `LOKI_URL`/`PUSHGATEWAY_URL` que as apps leem não
   têm destino neste cluster.

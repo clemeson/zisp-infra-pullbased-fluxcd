@@ -156,9 +156,9 @@
           <div class="number">01 / CÓDIGO</div><h3>Push na main</h3>
           <p>O código da API dispara o workflow de build no próprio repositório.</p><span class="tag">GitHub</span>
         </article>
-        <article class="step" data-title="2 · Build no CI" data-detail="GitHub Actions constrói a imagem e usa uma tag formada por timestamp Unix e SHA curto.">
+        <article class="step" data-title="2 · Build no CI" data-detail="GitHub Actions troca seu token OIDC por uma credencial AWS temporária e constrói a imagem com tag timestamp-SHA.">
           <div class="number">02 / CI</div><h3>Build da imagem</h3>
-          <p>O workflow usa credenciais AWS para autenticar no registry.</p><span class="tag">GitHub Actions</span>
+          <p>OIDC assume uma role IAM restrita à main do repositório.</p><span class="tag">GitHub Actions</span>
         </article>
         <article class="step" data-title="3 · Imagem publicada" data-detail="A imagem privada é enviada ao ECR; o CI não acessa o cluster.">
           <div class="number">03 / REGISTRY</div><h3>Push no ECR</h3>
