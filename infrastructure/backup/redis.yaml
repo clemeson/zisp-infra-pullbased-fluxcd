@@ -33,7 +33,7 @@ spec:
             - name: ecr-registry
           containers:
             - name: snapshot
-              image: 532295959828.dkr.ecr.us-east-1.amazonaws.com/zisp-backup:1793753536-e079f61 # {"$imagepolicy": "flux-system:zisp-backup"}
+              image: 532295959828.dkr.ecr.us-east-1.amazonaws.com/zisp-backup:1793754065-562b50d # {"$imagepolicy": "flux-system:zisp-backup"}
               envFrom:
                 - configMapRef: {name: backup-config}
                 - secretRef: {name: aws-backup-credentials}
