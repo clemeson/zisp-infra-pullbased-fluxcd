@@ -130,6 +130,7 @@ Dois conjuntos. O cluster usa o usuário IAM `zisp-k3s-runtime`, cujas
 credenciais estão em dois Secrets (`aws-backup-credentials` e
 `aws-ecr-credentials`). Os builds usam a role OIDC
 `zisp-github-ecr-push`, com credenciais temporárias.
+As policies aplicadas estão em [`docs/iam-aws.md`](docs/iam-aws.md).
 
 **Pull + scan** (cluster: CronJob `ecr-refresh`, e o Flux por tabela):
 `ecr:GetAuthorizationToken` tem `Resource: "*"` por exigência da API.
