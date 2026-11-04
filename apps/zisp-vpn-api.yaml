@@ -14,24 +14,20 @@ spec:
         kind: GitRepository
         name: flux-system
         namespace: flux-system
-  install: { remediation: { retries: 2 } }
-  upgrade: { remediation: { retries: 2 } }
+  install: {remediation: {retries: 2}}
+  upgrade: {remediation: {retries: 2}}
   values:
     nameOverride: zisp-vpn-api
-
     # ECR e privado por natureza: o kubelet puxa com este secret. Criado pelo
     # bootstrap.yml na vida do cluster e renovado de 8 em 8h pelo CronJob
     # ecr-refresh (infrastructure/ecr-refresh.yaml) -- token do ECR dura 12h.
     imagePullSecrets:
       - name: ecr-registry
-
     image:
       repository: 532295959828.dkr.ecr.us-east-1.amazonaws.com/zisp-vpn-api
-      tag: "0.1.0" # {"$imagepolicy": "flux-system:zisp-vpn-api:tag"}
-
+      tag: "1793753190-907a246" # {"$imagepolicy": "flux-system:zisp-vpn-api:tag"}
     containerPort: 3000
     portEnvName: API_PORT
-
     # Recreate, não RollingUpdate. Dois pods escrevendo o mesmo
     # /etc/ppp/chap-secrets é corrida de escrita, e o arquivo é reescrito
     # INTEIRO no delete. Já foi causa de incidente -- usuários VPN apagados.
@@ -39,20 +35,16 @@ spec:
     # No Flux antigo isto estava ausente e herdava RollingUpdate com maxSurge
     # 1: a corrida existia em TODO deploy, por ~30s.
     replicas: 1
-    strategy: { type: Recreate }
-
+    strategy: {type: Recreate}
     resources:
-      requests: { cpu: 50m, memory: 112Mi }
-      limits: { cpu: 200m, memory: 224Mi }
-
-    autoscaling: { enabled: false }
-
+      requests: {cpu: 50m, memory: 112Mi}
+      limits: {cpu: 200m, memory: 224Mi}
+    autoscaling: {enabled: false}
     probes:
       enabled: true
       path: /health
-      readiness: { initialDelaySeconds: 5, periodSeconds: 5, timeoutSeconds: 2, failureThreshold: 3 }
-      liveness: { initialDelaySeconds: 10, periodSeconds: 10, timeoutSeconds: 3, failureThreshold: 3 }
-
+      readiness: {initialDelaySeconds: 5, periodSeconds: 5, timeoutSeconds: 2, failureThreshold: 3}
+      liveness: {initialDelaySeconds: 10, periodSeconds: 10, timeoutSeconds: 3, failureThreshold: 3}
     env:
       configMap:
         enabled: true
@@ -62,7 +54,6 @@ spec:
           CONNECTIONS_STATE_PATH: "/var/run/ppp/connections.json"
           CONCILIATION_CRON: "0 */6 * * *"
           ZISP_API_INTERNAL_URL: "http://zisp-api-svc"
-
           # -----------------------------------------------------------
           # Topologia da VPN. Não são segredo, e é por isso que ficam aqui:
           # precisam ser revisáveis em PR.
@@ -76,7 +67,6 @@ spec:
           VPN_IP_RANGE_START: "10.19.25.10"
           VPN_IP_RANGE_END: "10.19.27.254"
           VPN_SERVER_PRIVATE_IP: "10.19.25.1"
-
           # DOMÍNIO, não IP. É este valor que a API devolve como vpnServerIp e
           # que vai no `connect-to=` de cada Mikrotik. Com domínio, trocar de
           # provedor é mudar o registro A -- sem visitar CPE.
@@ -88,25 +78,22 @@ spec:
       secret:
         enabled: true
         name: zisp-vpn-api-env
-
     # Sem ingress: só o zisp-api fala com ele, por DNS interno. Expor isto
     # daria a quem achasse a URL o poder de criar usuário de VPN. É por isso
     # que vpn.zisp.com.br pôde virar o nome do túnel sem colidir.
-    ingress: { enabled: false }
-
+    ingress: {enabled: false}
     # Os arquivos do ppp pertencem ao host, não ao cluster: quem escreve
     # /var/run/ppp são os hooks ip-up/ip-down do pppd, que roda no systemd.
     # Em nó único não há ambiguidade de qual host. O chap-secrets vai para o
     # S3 de hora em hora (infrastructure/backup/chap-secrets.yaml).
     volumes:
       - name: chap-secrets
-        hostPath: { path: /etc/ppp/chap-secrets, type: File }
+        hostPath: {path: /etc/ppp/chap-secrets, type: File}
       - name: ppp-run
-        hostPath: { path: /var/run/ppp, type: DirectoryOrCreate }
+        hostPath: {path: /var/run/ppp, type: DirectoryOrCreate}
     volumeMounts:
-      - { name: chap-secrets, mountPath: /etc/ppp/chap-secrets }
-      - { name: ppp-run, mountPath: /var/run/ppp }
-
+      - {name: chap-secrets, mountPath: /etc/ppp/chap-secrets}
+      - {name: ppp-run, mountPath: /var/run/ppp}
     migration:
       enabled: true
       command: ["npx", "prisma", "migrate", "deploy"]
